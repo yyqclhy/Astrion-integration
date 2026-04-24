@@ -1,7 +1,7 @@
 {
-  "name": "Sanytron IR Remote",
+  "name": "Astrion Remote",
   "content_type": "integration",
-  "domains": ["my_ir"],
+  "domains": ["astrion"],
   "homeassistant": "2024.1.0",
   "render_readme": true
 }

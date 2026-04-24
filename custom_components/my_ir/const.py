@@ -1,2 +1,2 @@
-DOMAIN = "my_ir"
-NAME = "Sanytron IR Remote"
+DOMAIN = "astrion"
+NAME = "Astrion Remote"
