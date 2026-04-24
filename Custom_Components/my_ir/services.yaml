@@ -1,0 +1,37 @@
+initiate_pairing:
+  name: 发起配对
+  description: 向 App 发起单个设备的配对请求
+  fields:
+    code:
+      name: 配对码
+      description: App 上显示的配对码
+      required: true
+      example: "123456"
+
+discover_all:
+  name: 发现所有设备
+  description: 广播模式，要求所有在线的 App 自动上报红外设备
+
+send_command:
+  name: 发送控制命令
+  description: 向指定的遥控器实体发送按键指令
+  fields:
+    entity_id:
+      name: 实体 ID
+      description: 目标 remote 实体的 ID
+      required: true
+      example: remote.xiaomi_tv_01
+    button:
+      name: 按键名称
+      description: 要发送的按键名称（如 "电源"）或原生红外长码
+      required: true
+      example: 电源
+
+remove_device:
+  name: 移除设备
+  description: 从集成中移除指定的红外设备
+  fields:
+    identifier:
+      name: 标识符
+      description: 设备的 Serial 编号或 Entity ID
+      required: true

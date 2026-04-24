@@ -1,0 +1,16 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "添加 Sanytron IR Remote",
+        "description": "点击提交添加集成（本集成只允许添加一个实例）"
+      }
+    },
+    "abort": {
+      "single_instance_allowed": "已存在一个 My IR Remote 集成。\n\n请直接使用现有集成，无需重复添加。",
+      "pair_initiated": "配对请求已发送！\n\n所有在线 Sanytron App 将自动上报设备。",
+      "cloud_fetch_failed": "无法连接到云端码库，请检查网络或 URL 是否正确。",
+      "not_paired_yet" :"网关未就绪！\n\n请先确保您的 App 已经配对成功，然后再为该网关添加红外子设备。"
+    }
+  }
+}

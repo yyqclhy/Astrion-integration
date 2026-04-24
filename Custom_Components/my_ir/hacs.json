@@ -1,0 +1,7 @@
+{
+  "name": "Sanytron IR Remote",
+  "content_type": "integration",
+  "domains": ["my_ir"],
+  "homeassistant": "2024.1.0",
+  "render_readme": true
+}

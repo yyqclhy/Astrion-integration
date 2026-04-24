@@ -1,0 +1,11 @@
+{
+  "domain": "my_ir",
+  "name": "Sanytron IR Remote",
+  "codeowners": ["yyqclhy"],
+  "version": "1.0.0",
+  "iot_class": "local_push",
+  "config_flow": true,
+  "documentation": "https://github.com/yyqclhy/Astrion-integration",
+  "issue_tracker": "https://github.com/yyqclhy/Astrion-integration/issues",
+  "dependencies": []
+}
