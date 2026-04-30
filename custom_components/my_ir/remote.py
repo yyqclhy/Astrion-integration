@@ -62,7 +62,7 @@ class MyIRRemote(RemoteEntity):
         for cmd in command:
             actual_ir_code = buttons.get(cmd, cmd)
             self.hass.bus.async_fire(f"{DOMAIN}/control_command", {
-                "serial_number": self._serial,
+                "serial_number": self._device_data.get("parent_app_serial"),
                 "button": actual_ir_code,
                 "timestamp": __import__("datetime").datetime.utcnow().isoformat(),
             })
