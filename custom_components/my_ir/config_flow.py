@@ -141,7 +141,7 @@ class MyIROptionsFlowHandler(config_entries.OptionsFlow):
 
         device_info = {
             "serial_number": serial,
-            "device_key": f"sanytron_{device_data['id']}_{parent_app_serial[-4:]}", # 让实体 ID 带上 Sanytron 和 父级尾号
+            "device_key": f"sanytron_{device_data['id']}_{parent_app_serial}", # 让实体 ID 带上 Sanytron 和 父级串号
             "name": f"Sanytron {device_data['name']}", # 强制带上 Sanytron 标识
             "buttons": buttons,
             "source": "cloud",

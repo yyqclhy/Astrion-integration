@@ -90,34 +90,42 @@ def handle_discover_all(call: ServiceCall) -> None:
 
 @callback
 def handle_send_command(call: ServiceCall) -> None:
-    """前端调用 send_command 时，翻译为真实红外长码并广播"""
+    """红外实体直接使用父网关串号发送控制命令"""
     hass = call.hass
     entity_id = call.data["entity_id"]
     ir_code = call.data["button"]
-    library = hass.data[DOMAIN].get("library", {})
-    
-    device_key = entity_id.replace("remote.", "") if entity_id.startswith("remote.") else entity_id
-    serial = None
-    device_data = {}
-    
-    for s, d in library.get("devices", {}).items():
-        if d.get("device_key") == device_key or s.lower() in device_key.lower():
-            serial = s
-            device_data = d
-            break
-            
-    if not serial:
-        _LOGGER.warning("未找到设备: %s", entity_id)
+
+    # 获取实体状态对象
+    state = hass.states.get(entity_id)
+    if not state:
+        _LOGGER.warning("实体不存在: %s", entity_id)
         return
 
-    buttons = device_data.get("buttons", {})
-    actual_ir_code = buttons.get(ir_code, ir_code)
+    # 检查是否是自定义红外实体
+    domain, _ = entity_id.split(".", 1)
+    if domain != "remote":
+        _LOGGER.debug("不是红外实体: %s", entity_id)
+        return
 
+    # 从实体属性获取父级网关串号
+    parent_serial = state.attributes.get("parent_app_serial")
+    if not parent_serial:
+        _LOGGER.warning("红外实体 %s 没有父网关串号", entity_id)
+        return
+
+    # 获取按键 IR 码
+    buttons = state.attributes.get("supported_keys", {})
+    # 按键 IR 码直接用传入的 button 名称
+    actual_ir_code = ir_code  # 或根据你的 IR 映射字典转换
+
+    # 直接发送控制命令，不再判断网关是否存在
     hass.bus.async_fire(f"{DOMAIN}/control_command", {
-        "serial_number": serial,
+        "serial_number": parent_serial,
         "button": actual_ir_code,
         "timestamp": datetime.utcnow().isoformat(),
     })
+    _LOGGER.info("红外控制命令发送: %s -> 父网关 %s -> 按键 %s",
+                 entity_id, parent_serial, actual_ir_code)
 
 # ====================== 4. WebSocket 接口定义 ======================
 @websocket_api.websocket_command({
