@@ -197,18 +197,31 @@ async def websocket_submit_pair_data(hass: HomeAssistant, connection, msg):
 })
 @websocket_api.async_response
 async def websocket_get_device_codes(hass: HomeAssistant, connection, msg):
-    """供 App 按需拉取完整红外码本的接口"""
+    """供 App 按需拉取完整红外码本的接口（增强版）"""
     entity_id = msg["entity_id"]
     library = hass.data[DOMAIN].get("library", {})
+    devices = library.get("devices", {})
     
-    device_key = entity_id.replace("remote.", "")
+    # 获取搜索用的 key（转为小写）
+    search_key = entity_id.replace("remote.", "").lower()
     target_data = None
-    
-    for s, d in library.get("devices", {}).items():
-        if d.get("device_key") == device_key or s.lower() in device_key.lower():
+
+    # 第一步：尝试直接通过小写化的 key 匹配
+    for s, d in devices.items():
+        stored_key = d.get("device_key", "").lower()
+        if stored_key == search_key or s.lower() in search_key:
             target_data = d
             break
-            
+
+    # 第二步：如果第一步失败，通过实体注册表找 unique_id (即 serial)
+    if not target_data:
+        from homeassistant.helpers import entity_registry as er
+        registry = er.async_get(hass)
+        entry = registry.async_get(entity_id)
+        # 只要找到了 unique_id，就一定能从 library 里拿出来
+        if entry and entry.unique_id in devices:
+            target_data = devices[entry.unique_id]
+
     if not target_data:
         connection.send_error(msg["id"], "not_found", f"未找到对应实体: {entity_id}")
         return
