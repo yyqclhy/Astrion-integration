@@ -1,0 +1,11 @@
+batch_upload_drivers.py
+api/addDevice.md
+api/category.md
+api/depot.md
+api/deviceList.md
+api/drive.md
+api/getBrand.md
+api/headers.md
+data/flipper_brands.xlsx
+data/flipper_categories.xlsx
+data/flipper_final_ir_database.json

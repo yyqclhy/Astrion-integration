@@ -9,8 +9,32 @@
     "abort": {
       "single_instance_allowed": "已存在一个 My IR Remote 集成。\n\n请直接使用现有集成，无需重复添加。",
       "pair_initiated": "配对请求已发送！\n\n所有在线 Sanytron App 将自动上报设备。",
-      "cloud_fetch_failed": "无法连接到云端码库，请检查网络或 URL 是否正确。",
+      "cloud_fetch_failed": "无法连接到红外驱动库API，请检查网络或服务是否正常运行。",
       "not_paired_yet" :"网关未就绪！\n\n请先确保您的 App 已经配对成功，然后再为该网关添加红外子设备。"
+    }
+  },
+  "options": {
+    "step": {
+      "depot": {
+        "title": "选择红外库",
+        "description": "{desc}"
+      },
+      "category": {
+        "title": "选择设备类型",
+        "description": "{desc}"
+      },
+      "brand": {
+        "title": "选择品牌",
+        "description": "{desc}"
+      },
+      "drive_list": {
+        "title": "选择驱动型号",
+        "description": "{desc}"
+      }
+    },
+    "abort": {
+      "cloud_fetch_failed": "无法连接到红外驱动库API，请检查网络或服务是否正常运行。",
+      "not_paired_yet": "网关未就绪！\n\n请先确保您的 App 已经配对成功，然后再为该网关添加红外子设备。"
     }
   }
 }
