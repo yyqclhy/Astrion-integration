@@ -298,25 +298,34 @@ class MyIROptionsFlowHandler(config_entries.OptionsFlow):
             _LOGGER.error("驱动数据缺少driveId")
             return self.async_abort(reason="cloud_fetch_failed")
 
-        # 1. 获取驱动详情以获得完整的 data JSON 字符串
+        # 1. 获取驱动详情（可能包装在 {code, msg, data: {...}} 中）
         detail = await self._api_get(f"/rc/app/drive/{drive_id}")
-        if detail:
-            data_json_str = detail.get("data", "{}")
-        else:
-            # 如果详情接口没返回，尝试用列表中的 data 字段（通常没有）
-            data_json_str = drive_data.get("data", "{}")
+        _LOGGER.debug("驱动 %s 详情原始响应: %s", drive_id, str(detail)[:300])
 
-        # 2. 解析 data 字段（JSON 字符串）
         commands = {}
-        if isinstance(data_json_str, str):
-            try:
-                data_obj = json.loads(data_json_str)
-                commands = data_obj.get("commands", {})
-            except json.JSONDecodeError:
-                _LOGGER.warning("驱动 %s 的data字段不是有效的JSON", drive_id)
-        elif isinstance(data_json_str, dict):
-            # 兼容 data 已经是字典的情况
-            commands = data_json_str.get("commands", {})
+
+        if detail:
+            # 尝试穿透常见 API 包装层找到实际的 drive 对象
+            drive_obj = detail
+            if "code" in detail and isinstance(detail.get("data"), dict):
+                # 包装格式: { code, msg, data: { categoryId, ..., data: "<json>", ... } }
+                drive_obj = detail["data"]
+
+            # 从 drive 对象中提取 data 字段（JSON 字符串）
+            data_field = drive_obj.get("data", "")
+
+            if isinstance(data_field, str) and data_field.strip():
+                try:
+                    data_obj = json.loads(data_field)
+                    commands = data_obj.get("commands", {})
+                except json.JSONDecodeError:
+                    _LOGGER.warning("驱动 %s 的data字段不是有效JSON: %s…", drive_id, data_field[:120])
+            elif isinstance(data_field, dict):
+                # data 字段本身已经是字典对象
+                commands = data_field.get("commands", {})
+
+        if not commands:
+            _LOGGER.warning("未能从驱动 %s 提取到commands，将创建空按键的遥控器", drive_id)
 
         if not commands:
             _LOGGER.warning("驱动 %s 没有提取到commands，将创建空按键的遥控器", drive_id)
