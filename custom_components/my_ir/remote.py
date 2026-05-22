@@ -8,9 +8,12 @@ async def async_setup_entry(
     hass: HomeAssistant, entry: ConfigEntry, async_add_entities: AddEntitiesCallback
 ) -> None:
     library = hass.data[DOMAIN]["library"]
+    # 只加载属于当前网关条目的红外设备，避免多网关串扰
+    parent_serial = entry.data.get("app_serial")
     entities = []
     for serial, device_data in library.get("devices", {}).items():
-        entities.append(MyIRRemote(hass, serial, device_data))
+        if device_data.get("parent_app_serial") == parent_serial:
+            entities.append(MyIRRemote(hass, serial, device_data))
     async_add_entities(entities, True)  # 更新已有实体
 
 

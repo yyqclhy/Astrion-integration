@@ -4,6 +4,7 @@ from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.core import callback
 import voluptuous as vol
 from .const import DOMAIN
+from homeassistant.helpers import selector
 import logging
 import json
 from datetime import datetime
@@ -61,14 +62,18 @@ class MyIROptionsFlowHandler(config_entries.OptionsFlow):
         # 步骤1: 库
         self._depot_id = None
         self._depot_name = None
+        self._depot_id_map = {}
         # 步骤2: 设备分类
         self._category_id = None
         self._category_name = None
+        self._cat_id_map = {}
         # 步骤3: 品牌
         self._brand_id = None
         self._brand_name = None
+        self._brand_id_map = {}
         # 步骤4: 驱动列表（分页收集）
         self._all_drives = []
+        self._drive_label_map = {}
 
     # ------------------------------------------------------------------
     #  API 请求工具（无认证头）
@@ -121,8 +126,11 @@ class MyIROptionsFlowHandler(config_entries.OptionsFlow):
     async def async_step_depot(self, user_input=None) -> FlowResult:
         """第一步：从API获取库列表，用户选择"""
         if user_input is not None:
-            self._depot_id = user_input["depot_id"]
-            self._depot_name = user_input.get("depot_name", self._depot_id)
+            selected = user_input["depot_id"]
+            if selected not in self._depot_id_map:
+                return await self.async_step_depot()
+            self._depot_id = self._depot_id_map[selected]
+            self._depot_name = selected
             _LOGGER.info("已选择库: %s (%s)", self._depot_name, self._depot_id)
             return await self.async_step_category()
 
@@ -132,18 +140,21 @@ class MyIROptionsFlowHandler(config_entries.OptionsFlow):
         if not depots:
             return self.async_abort(reason="cloud_fetch_failed")
 
-        # 构建选择器: { depotId: depotName }
-        depot_map = {}
+        self._depot_id_map = {}
+        self._depot_opts = []
         for d in depots:
-            did = d.get("depotId") or d.get("id")
+            did = str(d.get("depotId") or d.get("id"))
             dname = d.get("depotName") or d.get("name") or "未知库"
-            if did is not None:
-                depot_map[str(did)] = dname
+            if did:
+                self._depot_opts.append({"value": dname, "label": dname})
+                self._depot_id_map[dname] = did
 
         return self.async_show_form(
             step_id="depot",
             data_schema=vol.Schema({
-                vol.Required("depot_id"): vol.In(depot_map)
+                vol.Required("depot_id"): selector.SelectSelector(
+                    selector.SelectSelectorConfig(options=self._depot_opts, mode="dropdown")
+                )
             }),
             description_placeholders={
                 "desc": "请选择要添加设备的红外库"
@@ -157,8 +168,11 @@ class MyIROptionsFlowHandler(config_entries.OptionsFlow):
     async def async_step_category(self, user_input=None) -> FlowResult:
         """第二步：从API获取设备分类列表，用户选择"""
         if user_input is not None:
-            self._category_id = user_input["category_id"]
-            self._category_name = user_input.get("category_name", self._category_id)
+            selected = user_input["category_id"]
+            if selected not in self._cat_id_map:
+                return await self.async_step_category()
+            self._category_id = self._cat_id_map[selected]
+            self._category_name = selected
             _LOGGER.info("已选择分类: %s (%s)", self._category_name, self._category_id)
             return await self.async_step_brand()
 
@@ -168,17 +182,21 @@ class MyIROptionsFlowHandler(config_entries.OptionsFlow):
         if not categories:
             return self.async_abort(reason="cloud_fetch_failed")
 
-        cat_map = {}
+        self._cat_id_map = {}
+        self._cat_opts = []
         for c in categories:
-            cid = c.get("categoryId") or c.get("id") or c.get("category_id")
+            cid = str(c.get("categoryId") or c.get("id") or c.get("category_id"))
             cname = c.get("categoryName") or c.get("name") or "未知分类"
-            if cid is not None:
-                cat_map[str(cid)] = cname
+            if cid:
+                self._cat_opts.append({"value": cname, "label": cname})
+                self._cat_id_map[cname] = cid
 
         return self.async_show_form(
             step_id="category",
             data_schema=vol.Schema({
-                vol.Required("category_id"): vol.In(cat_map)
+                vol.Required("category_id"): selector.SelectSelector(
+                    selector.SelectSelectorConfig(options=self._cat_opts, mode="dropdown")
+                )
             }),
             description_placeholders={
                 "desc": "请选择设备类型（如电视、空调等）"
@@ -192,8 +210,11 @@ class MyIROptionsFlowHandler(config_entries.OptionsFlow):
     async def async_step_brand(self, user_input=None) -> FlowResult:
         """第三步：从API获取品牌列表，用户选择"""
         if user_input is not None:
-            self._brand_id = user_input["brand_id"]
-            self._brand_name = user_input.get("brand_name", self._brand_id)
+            selected = user_input["brand_id"]
+            if selected not in self._brand_id_map:
+                return await self.async_step_brand()
+            self._brand_id = self._brand_id_map[selected]
+            self._brand_name = selected
             _LOGGER.info("已选择品牌: %s (%s)", self._brand_name, self._brand_id)
             return await self.async_step_drive_list()
 
@@ -203,17 +224,21 @@ class MyIROptionsFlowHandler(config_entries.OptionsFlow):
         if not brands:
             return self.async_abort(reason="cloud_fetch_failed")
 
-        brand_map = {}
+        self._brand_id_map = {}
+        self._brand_opts = []
         for b in brands:
-            bid = b.get("brandId") or b.get("id")
+            bid = str(b.get("brandId") or b.get("id"))
             bname = b.get("brandName") or b.get("name") or "未知品牌"
-            if bid is not None:
-                brand_map[str(bid)] = bname
+            if bid:
+                self._brand_opts.append({"value": bname, "label": bname})
+                self._brand_id_map[bname] = bid
 
         return self.async_show_form(
             step_id="brand",
             data_schema=vol.Schema({
-                vol.Required("brand_id"): vol.In(brand_map)
+                vol.Required("brand_id"): selector.SelectSelector(
+                    selector.SelectSelectorConfig(options=self._brand_opts, mode="dropdown")
+                )
             }),
             description_placeholders={
                 "desc": "请选择设备品牌"
@@ -227,10 +252,10 @@ class MyIROptionsFlowHandler(config_entries.OptionsFlow):
     async def async_step_drive_list(self, user_input=None) -> FlowResult:
         """第四步：分页获取驱动列表，用户选择一条"""
         if user_input is not None:
-            selected_idx = int(user_input["drive_index"])
-            if 0 <= selected_idx < len(self._all_drives):
-                return await self._save_drive(self._all_drives[selected_idx])
-            return await self.async_step_depot()  # fallback
+            selected = user_input["drive_index"]
+            if selected not in self._drive_label_map:
+                return await self.async_step_drive_list()
+            return await self._save_drive(self._drive_label_map[selected])
 
         # 首次进入：分页收集所有驱动，查到最后一页为止
         self._all_drives = []
@@ -265,8 +290,9 @@ class MyIROptionsFlowHandler(config_entries.OptionsFlow):
                             self._category_id, self._depot_id, self._brand_id)
             return self.async_abort(reason="cloud_fetch_failed")
 
-        # 构建选择器
-        drive_map = {}
+        # 可搜索的下拉框（用 label 文本作为 value，combo box 才能显示名称）
+        self._drive_opts = []
+        self._drive_label_map = {}
         for i, d in enumerate(self._all_drives):
             brand_name = d.get("brand", {}).get("brandName", "")
             model = d.get("modelName", "未知型号")
@@ -275,12 +301,19 @@ class MyIROptionsFlowHandler(config_entries.OptionsFlow):
             if brand_name:
                 label = f"{brand_name} {model}"
             label += f" [{official}]"
-            drive_map[str(i)] = label
+            # 如果标签重复，追加区别后缀
+            key = label
+            while key in self._drive_label_map:
+                key = f"{label} #{i}"
+            self._drive_opts.append({"value": key, "label": label})
+            self._drive_label_map[key] = d
 
         return self.async_show_form(
             step_id="drive_list",
             data_schema=vol.Schema({
-                vol.Required("drive_index"): vol.In(drive_map)
+                vol.Required("drive_index"): selector.SelectSelector(
+                    selector.SelectSelectorConfig(options=self._drive_opts, mode="dropdown")
+                )
             }),
             description_placeholders={
                 "desc": f"共找到 {len(self._all_drives)} 个驱动，请选择要添加的设备"
@@ -326,9 +359,6 @@ class MyIROptionsFlowHandler(config_entries.OptionsFlow):
 
         if not commands:
             _LOGGER.warning("未能从驱动 %s 提取到commands，将创建空按键的遥控器", drive_id)
-
-        if not commands:
-            _LOGGER.warning("驱动 %s 没有提取到commands，将创建空按键的遥控器", drive_id)
 
         # 3. 构建设备信息
         library = self.hass.data[DOMAIN].setdefault("library", {"devices": {}})

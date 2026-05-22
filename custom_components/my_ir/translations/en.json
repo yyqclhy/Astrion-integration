@@ -1,0 +1,39 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Add Sanytron IR Remote",
+        "description": "Click submit to add a new integration instance."
+      }
+    },
+    "abort": {
+      "single_instance_allowed": "There is already a My IR Remote integration.\n\nPlease use the existing instance, no need to add another.",
+      "pair_initiated": "Pairing request sent!\n\nAll online Sanytron Apps will automatically report back.",
+      "cloud_fetch_failed": "Unable to connect to the IR driver API. Please check your network or service status."
+    }
+  },
+  "options": {
+    "step": {
+      "depot": {
+        "title": "Select IR Library",
+        "description": "{desc}"
+      },
+      "category": {
+        "title": "Select Device Type",
+        "description": "{desc}"
+      },
+      "brand": {
+        "title": "Select Brand",
+        "description": "{desc}"
+      },
+      "drive_list": {
+        "title": "Select Driver Model",
+        "description": "{desc}"
+      }
+    },
+    "abort": {
+      "cloud_fetch_failed": "Unable to connect to the IR driver API. Please check your network or service status.",
+      "not_paired_yet": "Gateway not ready!\n\nPlease make sure your App has paired successfully first, then add IR sub-devices for this gateway."
+    }
+  }
+}

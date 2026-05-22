@@ -66,6 +66,9 @@ async def async_remove_config_entry_device(
             break
 
     if serial and serial in devices:
+        # 只允许删除属于当前网关条目的设备，避免跨网关误删
+        if devices[serial].get("parent_app_serial") != config_entry.data.get("app_serial"):
+            return False
         devices.pop(serial, None)
         await hass.data[DOMAIN]["store"].async_save(library)
         
