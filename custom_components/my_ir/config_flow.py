@@ -137,8 +137,8 @@ class MyIROptionsFlowHandler(config_entries.OptionsFlow):
         for d in depots:
             did = d.get("depotId") or d.get("id")
             dname = d.get("depotName") or d.get("name") or "未知库"
-            if did:
-                depot_map[did] = dname
+            if did is not None:
+                depot_map[str(did)] = dname
 
         return self.async_show_form(
             step_id="depot",
@@ -172,8 +172,8 @@ class MyIROptionsFlowHandler(config_entries.OptionsFlow):
         for c in categories:
             cid = c.get("categoryId") or c.get("id") or c.get("category_id")
             cname = c.get("categoryName") or c.get("name") or "未知分类"
-            if cid:
-                cat_map[cid] = cname
+            if cid is not None:
+                cat_map[str(cid)] = cname
 
         return self.async_show_form(
             step_id="category",
@@ -207,8 +207,8 @@ class MyIROptionsFlowHandler(config_entries.OptionsFlow):
         for b in brands:
             bid = b.get("brandId") or b.get("id")
             bname = b.get("brandName") or b.get("name") or "未知品牌"
-            if bid:
-                brand_map[bid] = bname
+            if bid is not None:
+                brand_map[str(bid)] = bname
 
         return self.async_show_form(
             step_id="brand",
@@ -227,7 +227,7 @@ class MyIROptionsFlowHandler(config_entries.OptionsFlow):
     async def async_step_drive_list(self, user_input=None) -> FlowResult:
         """第四步：分页获取驱动列表，用户选择一条"""
         if user_input is not None:
-            selected_idx = user_input["drive_index"]
+            selected_idx = int(user_input["drive_index"])
             if 0 <= selected_idx < len(self._all_drives):
                 return await self._save_drive(self._all_drives[selected_idx])
             return await self.async_step_depot()  # fallback
@@ -275,7 +275,7 @@ class MyIROptionsFlowHandler(config_entries.OptionsFlow):
             if brand_name:
                 label = f"{brand_name} {model}"
             label += f" [{official}]"
-            drive_map[i] = label
+            drive_map[str(i)] = label
 
         return self.async_show_form(
             step_id="drive_list",
