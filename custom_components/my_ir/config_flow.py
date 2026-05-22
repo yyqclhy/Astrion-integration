@@ -153,7 +153,7 @@ class MyIROptionsFlowHandler(config_entries.OptionsFlow):
             step_id="depot",
             data_schema=vol.Schema({
                 vol.Required("depot_id"): selector.SelectSelector(
-                    selector.SelectSelectorConfig(options=self._depot_opts, mode="dropdown")
+                    selector.SelectSelectorConfig(options=self._depot_opts, mode="dropdown", custom_value=True)
                 )
             }),
             description_placeholders={
@@ -195,7 +195,7 @@ class MyIROptionsFlowHandler(config_entries.OptionsFlow):
             step_id="category",
             data_schema=vol.Schema({
                 vol.Required("category_id"): selector.SelectSelector(
-                    selector.SelectSelectorConfig(options=self._cat_opts, mode="dropdown")
+                    selector.SelectSelectorConfig(options=self._cat_opts, mode="dropdown", custom_value=True)
                 )
             }),
             description_placeholders={
@@ -237,7 +237,7 @@ class MyIROptionsFlowHandler(config_entries.OptionsFlow):
             step_id="brand",
             data_schema=vol.Schema({
                 vol.Required("brand_id"): selector.SelectSelector(
-                    selector.SelectSelectorConfig(options=self._brand_opts, mode="dropdown")
+                    selector.SelectSelectorConfig(options=self._brand_opts, mode="dropdown", custom_value=True)
                 )
             }),
             description_placeholders={
@@ -288,7 +288,7 @@ class MyIROptionsFlowHandler(config_entries.OptionsFlow):
         if not self._all_drives:
             _LOGGER.warning("未找到任何驱动: category=%s, depot=%s, brand=%s",
                             self._category_id, self._depot_id, self._brand_id)
-            return self.async_abort(reason="cloud_fetch_failed")
+            return self.async_abort(reason="no_drives_found")
 
         # 可搜索的下拉框（用 label 文本作为 value，combo box 才能显示名称）
         self._drive_opts = []
@@ -312,7 +312,7 @@ class MyIROptionsFlowHandler(config_entries.OptionsFlow):
             step_id="drive_list",
             data_schema=vol.Schema({
                 vol.Required("drive_index"): selector.SelectSelector(
-                    selector.SelectSelectorConfig(options=self._drive_opts, mode="dropdown")
+                    selector.SelectSelectorConfig(options=self._drive_opts, mode="dropdown", custom_value=True)
                 )
             }),
             description_placeholders={

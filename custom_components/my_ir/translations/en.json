@@ -33,7 +33,8 @@
     },
     "abort": {
       "cloud_fetch_failed": "Unable to connect to the IR driver API. Please check your network or service status.",
-      "not_paired_yet": "Gateway not ready!\n\nPlease make sure your App has paired successfully first, then add IR sub-devices for this gateway."
+      "not_paired_yet": "Gateway not ready!\n\nPlease make sure your App has paired successfully first, then add IR sub-devices for this gateway.",
+      "no_drives_found": "No matching drivers found. Please go back and change library/device type/brand."
     }
   }
 }
