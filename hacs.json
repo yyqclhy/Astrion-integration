@@ -1,5 +1,5 @@
 {
-  "name": "Astrion Remote",
+  "name": "Astrion Home",
   "content_type": "integration",
   "domains": ["astrion"],
   "homeassistant": "2024.1.0",

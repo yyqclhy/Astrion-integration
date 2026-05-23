@@ -165,9 +165,11 @@ async def websocket_submit_pair_data(hass: HomeAssistant, connection, msg):
         new_data = dict(target_entry.data)
         new_data["app_serial"] = app_serial
         
+        model = data.get("model", "IR Gateway")
+        
         hass.config_entries.async_update_entry(
             target_entry, 
-            title=f"Sanytron 网关: {app_serial}",
+            title=f"Smart Remote:{model} SN:{app_serial}",
             data=new_data
         )
         
@@ -176,9 +178,9 @@ async def websocket_submit_pair_data(hass: HomeAssistant, connection, msg):
         device_registry.async_get_or_create(
             config_entry_id=target_entry.entry_id,
             identifiers={(DOMAIN, app_serial)},
-            name=f"Sanytron {data.get('name', '红外网关')}",
-            manufacturer="Sanytron",
-            model="IR Gateway App",
+            name=f"Smart Remote {data.get('name', model)}",
+            manufacturer="Astrion",
+            model=model,
         )
 
         connection.send_result(msg["id"], {"success": True, "serial": app_serial})
@@ -186,8 +188,8 @@ async def websocket_submit_pair_data(hass: HomeAssistant, connection, msg):
         await hass.services.async_call(
             "persistent_notification", "create",
             {
-                "message": f"网关配对成功！\n名称：{data.get('name')}",
-                "title": "Sanytron IR - 发现新网关",
+                "message": f"网关配对成功！\n名称：{data.get('name', model)}",
+                "title": "Smart Remote - 发现新网关",
                 "notification_id": f"my_ir_pair_{app_serial}"
             }
         )
