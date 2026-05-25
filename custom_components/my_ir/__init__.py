@@ -1,6 +1,7 @@
 from homeassistant.core import HomeAssistant, ServiceCall, callback
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.helpers import storage, config_validation as cv, device_registry as dr
+from homeassistant.helpers import storage, config_validation as cv
+from homeassistant.helpers.device_registry import DeviceEntry
 from homeassistant.components import websocket_api
 import voluptuous as vol
 import asyncio
@@ -51,7 +52,7 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     return unload_ok
 
 async def async_remove_config_entry_device(
-    hass: HomeAssistant, config_entry: ConfigEntry, device_entry: dr.DeviceEntry
+    hass: HomeAssistant, config_entry: ConfigEntry, device_entry: DeviceEntry
 ) -> bool:
     """允许在设备页面通过 UI 删除特定红外设备"""
     if DOMAIN not in hass.data or "library" not in hass.data[DOMAIN]:
@@ -164,23 +165,14 @@ async def websocket_submit_pair_data(hass: HomeAssistant, connection, msg):
     if target_entry:
         new_data = dict(target_entry.data)
         new_data["app_serial"] = app_serial
+        new_data["app_model"] = data.get("model") or "IR Gateway"
         
-        model = data.get("model", "IR Gateway")
+        model = new_data["app_model"]
         
         hass.config_entries.async_update_entry(
             target_entry, 
             title=f"Smart Remote:{model} SN:{app_serial}",
             data=new_data
-        )
-        
-        # 将 App 注册为底层的物理设备网关
-        device_registry = dr.async_get(hass)
-        device_registry.async_get_or_create(
-            config_entry_id=target_entry.entry_id,
-            identifiers={(DOMAIN, app_serial)},
-            name=f"Smart Remote {data.get('name', model)}",
-            manufacturer="Astrion",
-            model=model,
         )
 
         connection.send_result(msg["id"], {"success": True, "serial": app_serial})

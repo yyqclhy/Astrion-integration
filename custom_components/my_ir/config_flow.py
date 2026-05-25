@@ -11,7 +11,8 @@ from datetime import datetime
 
 _LOGGER = logging.getLogger(__name__)
 
-API_BASE_URL = "http://192.168.0.210:8081/pro-api"
+API_BASE_URL = "https://astrion.lifex360.com/api/v1"
+# 按键控制，喇叭播放，电量，屏幕唤醒集成到HA中，在
 
 class MyIRConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     """配置流程 (首次添加集成网关时触发)"""
