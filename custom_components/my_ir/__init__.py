@@ -6,8 +6,11 @@ from homeassistant.components import websocket_api
 import voluptuous as vol
 import asyncio
 from datetime import datetime
+import json
+import glob
+import os
 import logging
-from .const import DOMAIN
+from .const import DOMAIN, HARMONY_CONF_PATTERN
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -16,6 +19,63 @@ STORAGE_KEY = f"{DOMAIN}.library"
 
 # ====================== 1. 核心初始化 ======================
 async def async_setup(hass: HomeAssistant, config: dict) -> bool:
+    # 延迟导入 HomeAssistantView，避免模块加载时的依赖问题
+    from homeassistant.components.http import HomeAssistantView
+
+    class HarmonyConfigView(HomeAssistantView):
+        """提供 Harmony Hub 配置文件的 HTTP API 端点
+
+        在 HA 配置目录中查找 harmony_*.conf 文件并返回其 JSON 内容。
+        供 Lovelace 卡片获取 Harmony Hub 的活动、设备和命令列表。
+        """
+        url = "/api/astrion/harmony_config"
+        name = "api:astrion:harmony_config"
+        requires_auth = True
+
+        def __init__(self, hass):
+            self.hass = hass
+
+        def _find_all_harmony_confs(self):
+            """在配置目录中寻找所有 harmony_*.conf 文件"""
+            config_dir = self.hass.config.config_dir
+            pattern = os.path.join(config_dir, HARMONY_CONF_PATTERN)
+            files = sorted(glob.glob(pattern))
+            return files
+
+        async def get(self, request):
+            """处理 GET 请求 — 返回所有 Harmony Hub 的配置文件内容"""
+            conf_files = await self.hass.async_add_executor_job(self._find_all_harmony_confs)
+
+            if not conf_files:
+                return self.json(
+                    {"error": "未在配置目录中找到 harmony_*.conf 文件"},
+                    status_code=404
+                )
+
+            try:
+                def read_all_files():
+                    hubs = []
+                    for path in conf_files:
+                        _LOGGER.info("读取 Harmony 配置文件: %s", path)
+                        with open(path, 'r', encoding='utf-8') as f:
+                            data = json.load(f)
+                        basename = os.path.basename(path)
+                        hub_name = basename.replace("harmony_", "").replace(".conf", "")
+                        hubs.append({
+                            "hub_name": hub_name,
+                            "source_file": basename,
+                            "config": data
+                        })
+                    return hubs
+
+                hubs = await self.hass.async_add_executor_job(read_all_files)
+                return self.json({"hubs": hubs})
+
+            except Exception as e:
+                _LOGGER.error("读取 Harmony 配置文件失败: %s", e)
+                return self.json({"error": str(e)}, status_code=500)
+
+    hass.http.register_view(HarmonyConfigView(hass))
     return True
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
@@ -28,6 +88,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     # 注册所有的 WebSocket 接口
     websocket_api.async_register_command(hass, websocket_submit_pair_data)
     websocket_api.async_register_command(hass, websocket_get_device_codes)
+    websocket_api.async_register_command(hass, websocket_get_harmony_config)
 
     # 加载遥控器实体平台
     await hass.config_entries.async_forward_entry_setups(entry, ["remote"])
@@ -229,3 +290,56 @@ async def websocket_get_device_codes(hass: HomeAssistant, connection, msg):
         "parent_app_serial": target_data.get("parent_app_serial"),
         "ir_codes": target_data.get("buttons", {})
     })
+
+
+@websocket_api.websocket_command({
+    vol.Required("type"): f"{DOMAIN}/get_harmony_config",
+    vol.Optional("entity_id"): cv.string,
+})
+@websocket_api.async_response
+async def websocket_get_harmony_config(hass: HomeAssistant, connection, msg):
+    """通过 WebSocket 获取 Harmony Hub 的配置文件内容
+
+    如果传入 entity_id，根据实体的 unique_id 精确匹配对应的配置文件；
+    如果不传，返回所有配置文件（兼容旧版）。
+    """
+    try:
+        config_dir = hass.config.config_dir
+        pattern = os.path.join(config_dir, HARMONY_CONF_PATTERN)
+        all_files = sorted(glob.glob(pattern))
+
+        # 如果传了 entity_id，通过实体注册表查 unique_id 来匹配
+        target_unique_id = None
+        entity_id = msg.get("entity_id")
+        if entity_id:
+            from homeassistant.helpers import entity_registry as er
+            registry = er.async_get(hass)
+            entry = registry.async_get(entity_id)
+            if entry:
+                target_unique_id = entry.unique_id
+                _LOGGER.debug("Harmony 实体 %s → unique_id: %s", entity_id, target_unique_id)
+
+        hubs = []
+        for path in all_files:
+            basename = os.path.basename(path)
+            file_id = basename.replace("harmony_", "").replace(".conf", "")
+
+            # 如果指定了 unique_id，只匹配对应文件
+            if target_unique_id and file_id != target_unique_id:
+                continue
+
+            _LOGGER.info("读取 Harmony 配置文件: %s", path)
+            with open(path, 'r', encoding='utf-8') as f:
+                data = json.load(f)
+            hubs.append({
+                "hub_name": file_id,
+                "source_file": basename,
+                "config": data
+            })
+
+        connection.send_result(msg["id"], {"hubs": hubs})
+
+    except Exception as e:
+        _LOGGER.error("读取 Harmony 配置文件失败: %s", e)
+        connection.send_error(msg["id"], "read_error", str(e))
+
