@@ -9,3 +9,4 @@ api/headers.md
 data/flipper_brands.xlsx
 data/flipper_categories.xlsx
 data/flipper_final_ir_database.json
+data/flipper_tlv_compiler.py

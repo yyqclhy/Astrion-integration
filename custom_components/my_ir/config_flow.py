@@ -7,6 +7,7 @@ from .const import DOMAIN
 from homeassistant.helpers import selector
 import logging
 import json
+import asyncio
 from datetime import datetime
 
 _LOGGER = logging.getLogger(__name__)
@@ -25,34 +26,98 @@ class MyIRConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         return MyIROptionsFlowHandler(config_entry)
 
     async def async_step_user(self, user_input: dict | None = None) -> FlowResult:
-        """步骤：添加集成网关"""
+        """点击集成名称即发送配对请求，无需中间表单"""
         
-        # 【重要】这里绝对没有 single_instance_allowed 的判断了！
+        # 【关键】确保 WebSocket 处理器已注册（async_setup 可能未被调用）
+        from homeassistant.components import websocket_api
+        from . import websocket_submit_pair_data, websocket_get_device_codes, websocket_get_harmony_config
+        websocket_api.async_register_command(self.hass, websocket_submit_pair_data)
+        websocket_api.async_register_command(self.hass, websocket_get_device_codes)
+        websocket_api.async_register_command(self.hass, websocket_get_harmony_config)
+        _LOGGER.info("【config_flow】WebSocket 处理器已在配置流程中注册")
         
+        # 开始新配对前，清理上次残留的发现列表
+        self.hass.data.setdefault(DOMAIN, {}).pop("discovered_gateways", None)
+        
+        # 直接发出配对广播
+        self.hass.bus.async_fire(f"{DOMAIN}/pair_request", {
+            "code": "DISCOVER_ALL",
+            "mode": "discover_all",
+            "timestamp": datetime.utcnow().isoformat(),
+            "source": "config_flow"
+        })
+        _LOGGER.info("已通过配置向导广播配对请求，等待 5 秒…")
+        
+        # 等待 5 秒让 App 响应
+        await asyncio.sleep(5)
+        
+        discovered = self.hass.data.get(DOMAIN, {}).get("discovered_gateways", {})
+        _LOGGER.info("5秒后发现列表有 %d 个网关: %s", len(discovered), list(discovered.keys()))
+        
+        # 进入发现步骤
+        return await self.async_step_discover()
+
+    async def async_step_discover(self, user_input: dict | None = None) -> FlowResult:
+        """显示已发现的网关列表，或重试搜索"""
+        discovered = self.hass.data.get(DOMAIN, {}).get("discovered_gateways", {})
+
         if user_input is not None:
-            # 只有点击提交后，才会发出单次广播
-            self.hass.bus.async_fire(f"{DOMAIN}/pair_request", {
-                "code": "DISCOVER_ALL",
-                "mode": "discover_all",
-                "timestamp": datetime.utcnow().isoformat(),
-                "source": "config_flow"
-            })
-            _LOGGER.info("已通过配置向导广播单次配对请求")
+            selected_serial = user_input.get("gateway")
+            if selected_serial and selected_serial in discovered:
+                gw_data = discovered[selected_serial]
+                model = gw_data.get("model", "IR Gateway")
+                # 创建条目，填入 App 信息
+                return self.async_create_entry(
+                    title=f"Smart Remote:{model} SN:{selected_serial}",
+                    data={
+                        "app_serial": selected_serial,
+                        "app_model": model
+                    }
+                )
+            # 用户点了重试按钮
+            if user_input.get("retry"):
+                self.hass.bus.async_fire(f"{DOMAIN}/pair_request", {
+                    "code": "DISCOVER_ALL",
+                    "mode": "discover_all",
+                    "timestamp": datetime.utcnow().isoformat(),
+                    "source": "config_flow"
+                })
+                _LOGGER.info("用户要求重新搜索网关，等待 5 秒…")
+                await asyncio.sleep(5)
+                # 重试后重新读取发现列表
+                discovered = self.hass.data.get(DOMAIN, {}).get("discovered_gateways", {})
 
-            # 创一个空条目，等 App 连上来
-            return self.async_create_entry(
-                title="IR 遥控网关 (等待连接)",
-                data={}
+        _LOGGER.info("【discover最终检查】discovered_gateways=%s, len=%d", dict(discovered), len(discovered))
+        
+        # 检查是否有发现的网关
+        if discovered:
+            _LOGGER.info("【discover】有发现！显示选择列表，共 %d 个", len(discovered))
+            options = [
+                {"value": s, "label": f"Smart Remote:{d.get('model','IR Gateway')} SN:{s}"}
+                for s, d in discovered.items()
+            ]
+            return self.async_show_form(
+                step_id="discover",
+                data_schema=vol.Schema({
+                    vol.Required("gateway"): selector.SelectSelector(
+                        selector.SelectSelectorConfig(options=options, mode="list")
+                    )
+                }),
+                description_placeholders={
+                    "count": str(len(discovered))
+                }
             )
-
-        # 界面仅显示提示，不需要任何输入框
-        return self.async_show_form(
-            step_id="user",
-            data_schema=vol.Schema({}),
-            description_placeholders={
-                "desc": "点击【提交】以添加一个新的 App 遥控网关。\n\nHA 将向局域网广播单次配对指令，请确保您的 App 已打开并准备好接收。"
-            }
-        )
+        else:
+            _LOGGER.info("【discover】无发现，显示重试界面")
+            # 无发现，显示重试界面
+            return self.async_show_form(
+                step_id="discover_retry",
+                data_schema=vol.Schema({
+                    vol.Optional("retry", default=False): selector.BooleanSelector(
+                        selector.BooleanSelectorConfig()
+                    )
+                })
+            )
 
 
 # ====================== 选项流 (点击“配置”按钮后触发) ======================

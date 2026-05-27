@@ -1,16 +1,20 @@
 {
   "config": {
     "step": {
-      "user": {
-        "title": "添加 Smart Remote",
-        "description": "点击提交添加集成（本集成只允许添加一个实例）"
+      "discover": {
+        "title": "选择要配对的网关",
+        "description": "发现 {count} 个网关，请选择要配对的设备："
+      },
+      "discover_retry": {
+        "title": "重试搜索",
+        "description": "未搜索到网关…\n\n请确保您的遥控器已登录 HA 并连接在同一局域网。\n勾选「重新搜索」后点击提交，将再次广播并等待 5 秒。"
       }
     },
     "abort": {
       "single_instance_allowed": "已存在一个 My IR Remote 集成。\n\n请直接使用现有集成，无需重复添加。",
       "pair_initiated": "配对请求已发送！\n\n所有在线 Smart Remote App 将自动上报设备。",
       "cloud_fetch_failed": "无法连接到红外驱动库API，请检查网络或服务是否正常运行。",
-      "not_paired_yet" :"网关未就绪！\n\n请先确保您的 App 已经配对成功，然后再为该网关添加红外子设备。"
+      "not_paired_yet" :"网关未就绪！\n\n请先确保您的 遥控器 已经配对成功，然后再为该网关添加红外子设备。"
     }
   },
   "options": {
@@ -34,7 +38,7 @@
     },
     "abort": {
       "cloud_fetch_failed": "无法连接到红外驱动库API，请检查网络或服务是否正常运行。",
-      "not_paired_yet": "网关未就绪！\n\n请先确保您的 App 已经配对成功，然后再为该网关添加红外子设备。",
+      "not_paired_yet": "网关未就绪！\n\n请先确保您的 遥控器已经配对成功，然后再为该网关添加红外子设备。",
       "no_drives_found": "未找到匹配的驱动，请返回重新选择库/设备类型/品牌。"
     }
   }

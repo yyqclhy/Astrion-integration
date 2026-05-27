@@ -19,8 +19,11 @@ STORAGE_KEY = f"{DOMAIN}.library"
 
 # ====================== 1. 核心初始化 ======================
 async def async_setup(hass: HomeAssistant, config: dict) -> bool:
-    # 延迟导入 HomeAssistantView，避免模块加载时的依赖问题
+    _LOGGER.info("【启动】async_setup 被调用了！config=%s", config)
+    
+    # 延迟导入，避免模块加载时的依赖问题
     from homeassistant.components.http import HomeAssistantView
+    from homeassistant.components import websocket_api
 
     class HarmonyConfigView(HomeAssistantView):
         """提供 Harmony Hub 配置文件的 HTTP API 端点
@@ -76,6 +79,17 @@ async def async_setup(hass: HomeAssistant, config: dict) -> bool:
                 return self.json({"error": str(e)}, status_code=500)
 
     hass.http.register_view(HarmonyConfigView(hass))
+    
+    # 【关键】注册 WebSocket 处理器（必须在 config_entry 存在之前就注册，否则首次添加集成时 App 消息无处理器）
+    _LOGGER.info("【启动】开始注册 WebSocket 处理器…")
+    try:
+        websocket_api.async_register_command(hass, websocket_submit_pair_data)
+        websocket_api.async_register_command(hass, websocket_get_device_codes)
+        websocket_api.async_register_command(hass, websocket_get_harmony_config)
+        _LOGGER.info("【启动】WebSocket 处理器注册成功！")
+    except Exception as e:
+        _LOGGER.error("【启动】WebSocket 处理器注册失败: %s", e)
+    
     return True
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
@@ -85,7 +99,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     hass.data[DOMAIN]["store"] = store
     hass.data[DOMAIN]["library"] = await store.async_load() or {"devices": {}}
 
-    # 注册所有的 WebSocket 接口
+    # 冗余注册 WebSocket 处理器（如果 async_setup 已注册，这是无操作）
     websocket_api.async_register_command(hass, websocket_submit_pair_data)
     websocket_api.async_register_command(hass, websocket_get_device_codes)
     websocket_api.async_register_command(hass, websocket_get_harmony_config)
@@ -200,9 +214,12 @@ def handle_send_command(call: ServiceCall) -> None:
 })
 @websocket_api.async_response
 async def websocket_submit_pair_data(hass: HomeAssistant, connection, msg):
-    """App 上报配对数据的接口（纯网关注册，不生成遥控实体）"""
+    """App 上报配对数据的接口（存入发现列表，等待用户在配置流程中选择）"""
+    _LOGGER.info("【配对我收到消息啦】原始消息: %s", str(msg)[:500])
+    
     data = msg["data"]
     app_serial = data.get("serial_number")
+    _LOGGER.info("【配对】serial_number=%s, model=%s, 完整data=%s", app_serial, data.get("model"), str(data)[:300])
     
     if not app_serial:
         connection.send_error(msg["id"], "missing_serial", "缺少 serial_number")
@@ -210,44 +227,35 @@ async def websocket_submit_pair_data(hass: HomeAssistant, connection, msg):
 
     entries = hass.config_entries.async_entries(DOMAIN)
     
-    # 1. 查重：App 已存在则无需重复配对
+    # 查重：App 已存在则无需再次发现
     for entry in entries:
         if entry.data.get("app_serial") == app_serial:
             connection.send_result(msg["id"], {"success": True, "message": "App 已存在，无需重复配对"})
             return
 
-    # 2. 找空闲条目
-    target_entry = None
-    for entry in entries:
-        if not entry.data.get("app_serial"):
-            target_entry = entry
-            break
-            
-    if target_entry:
-        new_data = dict(target_entry.data)
-        new_data["app_serial"] = app_serial
-        new_data["app_model"] = data.get("model") or "IR Gateway"
-        
-        model = new_data["app_model"]
-        
-        hass.config_entries.async_update_entry(
-            target_entry, 
-            title=f"Smart Remote:{model} SN:{app_serial}",
-            data=new_data
-        )
-
-        connection.send_result(msg["id"], {"success": True, "serial": app_serial})
-        
-        await hass.services.async_call(
-            "persistent_notification", "create",
-            {
-                "message": f"网关配对成功！\n名称：{data.get('name', model)}",
-                "title": "Smart Remote - 发现新网关",
-                "notification_id": f"my_ir_pair_{app_serial}"
-            }
-        )
-    else:
-        connection.send_error(msg["id"], "no_pending_entry", "没有等待配对的空闲条目")
+    # 存入发现列表，等待用户在配置流程中选择
+    hass.data.setdefault(DOMAIN, {})
+    hass.data[DOMAIN].setdefault("discovered_gateways", {})
+    
+    model = data.get("model") or "IR Gateway"
+    hass.data[DOMAIN]["discovered_gateways"][app_serial] = {
+        "serial_number": app_serial,
+        "model": model,
+        "name": data.get("name", ""),
+    }
+    
+    # 触发 bus 事件，方便外部监听（如配置流程自动刷新）
+    hass.bus.async_fire(f"{DOMAIN}/gateway_discovered", {
+        "serial": app_serial,
+        "model": model,
+    })
+    
+    _LOGGER.info("发现新网关: Smart Remote:%s SN:%s (已存入待选列表)", model, app_serial)
+    connection.send_result(msg["id"], {
+        "success": True,
+        "serial": app_serial,
+        "message": "网关已加入待选列表，请在 HA 配置界面中选择确认"
+    })
 
 @websocket_api.websocket_command({
     vol.Required("type"): f"{DOMAIN}/get_device_codes",
