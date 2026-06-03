@@ -74,18 +74,6 @@ class MyIRConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                         "app_model": model
                     }
                 )
-            # 用户点了重试按钮
-            if user_input.get("retry"):
-                self.hass.bus.async_fire(f"{DOMAIN}/pair_request", {
-                    "code": "DISCOVER_ALL",
-                    "mode": "discover_all",
-                    "timestamp": datetime.utcnow().isoformat(),
-                    "source": "config_flow"
-                })
-                _LOGGER.info("用户要求重新搜索网关，等待 5 秒…")
-                await asyncio.sleep(5)
-                # 重试后重新读取发现列表
-                discovered = self.hass.data.get(DOMAIN, {}).get("discovered_gateways", {})
 
         _LOGGER.info("【discover最终检查】discovered_gateways=%s, len=%d", dict(discovered), len(discovered))
         
@@ -118,6 +106,58 @@ class MyIRConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                     )
                 })
             )
+
+    async def async_step_discover_retry(self, user_input: dict | None = None) -> FlowResult:
+        """处理重试表单的提交——重新广播发现"""
+        if user_input is None:
+            return self.async_show_form(
+                step_id="discover_retry",
+                data_schema=vol.Schema({
+                    vol.Optional("retry", default=False): selector.BooleanSelector(
+                        selector.BooleanSelectorConfig()
+                    )
+                })
+            )
+
+        if user_input.get("retry"):
+            self.hass.bus.async_fire(f"{DOMAIN}/pair_request", {
+                "code": "DISCOVER_ALL",
+                "mode": "discover_all",
+                "timestamp": datetime.utcnow().isoformat(),
+                "source": "config_flow"
+            })
+            _LOGGER.info("【重试】用户要求重新搜索网关，等待 5 秒…")
+            await asyncio.sleep(5)
+
+            discovered = self.hass.data.get(DOMAIN, {}).get("discovered_gateways", {})
+            _LOGGER.info("【重试】发现列表: %d 个网关", len(discovered))
+
+            if discovered:
+                options = [
+                    {"value": s, "label": f"Smart Remote:{d.get('model','IR Gateway')} SN:{s}"}
+                    for s, d in discovered.items()
+                ]
+                return self.async_show_form(
+                    step_id="discover",
+                    data_schema=vol.Schema({
+                        vol.Required("gateway"): selector.SelectSelector(
+                            selector.SelectSelectorConfig(options=options, mode="list")
+                        )
+                    }),
+                    description_placeholders={
+                        "count": str(len(discovered))
+                    }
+                )
+
+        # 仍然无发现，或用户未勾选重试——再次显示重试界面
+        return self.async_show_form(
+            step_id="discover_retry",
+            data_schema=vol.Schema({
+                vol.Optional("retry", default=False): selector.BooleanSelector(
+                    selector.BooleanSelectorConfig()
+                )
+            })
+        )
 
 
 # ====================== 选项流 (点击“配置”按钮后触发) ======================
