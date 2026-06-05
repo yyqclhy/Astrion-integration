@@ -3,6 +3,5 @@
   "content_type": "integration",
   "domains": ["astrion"],
   "homeassistant": "2024.1.0",
-  "render_readme": true,
-  "icon": "https://raw.githubusercontent.com/yyqclhy/Astrion-integration/main/images/icon.png"
+  "render_readme": true
 }
