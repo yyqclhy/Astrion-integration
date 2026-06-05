@@ -12,3 +12,7 @@ data/flipper_final_ir_database.json
 data/flipper_tlv_compiler.py
 data/encrypt_raw_ir.py
 data/firemote_device_database_v3.json
+data/encrypt_ir_to_db.py
+data/upload_ir_database.py
+data/芝杜-UHD3000.txt
+data/芝杜-UHD3000_encrypted.json

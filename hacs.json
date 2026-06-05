@@ -3,5 +3,6 @@
   "content_type": "integration",
   "domains": ["astrion"],
   "homeassistant": "2024.1.0",
-  "render_readme": true
+  "render_readme": true,
+  "icon": "custom_components/my_ir/brand/icon.png"
 }
