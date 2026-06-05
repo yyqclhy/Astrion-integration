@@ -4,5 +4,5 @@
   "domains": ["astrion"],
   "homeassistant": "2024.1.0",
   "render_readme": true,
-  "icon": "https://raw.githubusercontent.com/yyqclhy/Astrion-integration/tree/main/images/icon.png"
+  "icon": "https://raw.githubusercontent.com/yyqclhy/Astrion-integration/main/images/icon.png"
 }
