@@ -222,6 +222,10 @@ async def websocket_submit_pair_data(hass: HomeAssistant, connection, msg):
     _LOGGER.info("【配对】serial_number=%s, model=%s, 完整data=%s", app_serial, data.get("model"), str(data)[:300])
     
     if not app_serial:
+        _LOGGER.warning(
+            "【配对错误】App 上报数据中缺少 serial_number，无法存入发现列表。"
+            "完整消息: %s", str(msg)[:500]
+        )
         connection.send_error(msg["id"], "missing_serial", "缺少 serial_number")
         return
 
@@ -230,6 +234,7 @@ async def websocket_submit_pair_data(hass: HomeAssistant, connection, msg):
     # 查重：App 已存在则无需再次发现
     for entry in entries:
         if entry.data.get("app_serial") == app_serial:
+            _LOGGER.info("【配对】App 串号 %s 已存在配置条目，跳过重复配对", app_serial)
             connection.send_result(msg["id"], {"success": True, "message": "App 已存在，无需重复配对"})
             return
 

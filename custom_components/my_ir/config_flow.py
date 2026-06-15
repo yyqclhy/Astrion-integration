@@ -46,10 +46,13 @@ class MyIRConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             "timestamp": datetime.utcnow().isoformat(),
             "source": "config_flow"
         })
-        _LOGGER.info("已通过配置向导广播配对请求，等待 5 秒…")
+        _LOGGER.info(
+            "【配对】已广播 pair_request 事件 (%s/pair_request)，等待 App 响应 8 秒… "
+            "请确保 App 已登录且与 HA 的 WebSocket 连接正常", DOMAIN
+        )
         
-        # 等待 5 秒让 App 响应
-        await asyncio.sleep(5)
+        # 等待 8 秒让 App 响应
+        await asyncio.sleep(8)
         
         discovered = self.hass.data.get(DOMAIN, {}).get("discovered_gateways", {})
         _LOGGER.info("5秒后发现列表有 %d 个网关: %s", len(discovered), list(discovered.keys()))
@@ -126,8 +129,8 @@ class MyIRConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 "timestamp": datetime.utcnow().isoformat(),
                 "source": "config_flow"
             })
-            _LOGGER.info("【重试】用户要求重新搜索网关，等待 5 秒…")
-            await asyncio.sleep(5)
+            _LOGGER.info("【重试】用户要求重新搜索网关，等待 8 秒…")
+            await asyncio.sleep(8)
 
             discovered = self.hass.data.get(DOMAIN, {}).get("discovered_gateways", {})
             _LOGGER.info("【重试】发现列表: %d 个网关", len(discovered))
@@ -150,6 +153,11 @@ class MyIRConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 )
 
         # 仍然无发现，或用户未勾选重试——再次显示重试界面
+        if not user_input.get("retry"):
+            _LOGGER.info("【重试】用户未勾选「重新搜索」，保持重试界面")
+        else:
+            _LOGGER.warning("【重试】重试后仍无发现，请检查 App 是否在线")
+
         return self.async_show_form(
             step_id="discover_retry",
             data_schema=vol.Schema({
