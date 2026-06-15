@@ -365,7 +365,7 @@ class MyIROptionsFlowHandler(config_entries.OptionsFlow):
 
         # 首次进入：分页收集所有驱动，查到最后一页为止
         self._all_drives = []
-        page_size = 10
+        page_size = 200
         page_num = 1
 
         while True:

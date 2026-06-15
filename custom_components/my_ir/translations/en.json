@@ -41,5 +41,15 @@
       "not_paired_yet": "Gateway not ready!\n\nMake sure your remote has been paired first, then add IR sub-devices for this gateway.",
       "no_drives_found": "No matching drivers found. Please go back and change library/device type/brand."
     }
+  },
+  "entity": {
+    "select": {
+      "navigate": {
+        "name": "Navigate Event"
+      },
+      "scene": {
+        "name": "Navigate Action"
+      }
+    }
   }
 }

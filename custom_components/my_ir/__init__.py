@@ -82,13 +82,60 @@ async def async_setup(hass: HomeAssistant, config: dict) -> bool:
     
     # 【关键】注册 WebSocket 处理器（必须在 config_entry 存在之前就注册，否则首次添加集成时 App 消息无处理器）
     _LOGGER.info("【启动】开始注册 WebSocket 处理器…")
-    try:
-        websocket_api.async_register_command(hass, websocket_submit_pair_data)
-        websocket_api.async_register_command(hass, websocket_get_device_codes)
-        websocket_api.async_register_command(hass, websocket_get_harmony_config)
-        _LOGGER.info("【启动】WebSocket 处理器注册成功！")
-    except Exception as e:
-        _LOGGER.error("【启动】WebSocket 处理器注册失败: %s", e)
+    websocket_api.async_register_command(hass, websocket_submit_pair_data)
+    websocket_api.async_register_command(hass, websocket_get_device_codes)
+    websocket_api.async_register_command(hass, websocket_get_harmony_config)
+    _LOGGER.info("【启动】WebSocket 处理器注册成功！")
+
+    # 监听 APK 通过 fire_event 上报的导航列表
+    async def _handle_navigate_list_upload(event):
+        """APK 上报导航列表 → 更新 store → 通知 select 实体"""
+        data = event.data
+        serial = data.get("serial_number")
+        pages = data.get("pages", [])
+        if not serial or not pages:
+            return
+        library = hass.data.setdefault(DOMAIN, {}).setdefault("library", {"devices": {}})
+        gateways = library.setdefault("gateways", {})
+        gateways.setdefault(serial, {})["pages"] = pages
+        await hass.data[DOMAIN]["store"].async_save(library)
+        _LOGGER.info("网关 %s 导航列表上报: %s", serial, pages)
+        hass.bus.async_fire(f"{DOMAIN}/navigate_list_updated", {
+            "serial_number": serial,
+            "pages": pages,
+        })
+
+    hass.bus.async_listen(f"{DOMAIN}/navigate_list_upload", _handle_navigate_list_upload)
+
+    # 监听 APK 上报的页面访问（反向触发自动化）
+    async def _handle_page_visited(event):
+        """APK 页面访问上报
+
+        - source="user": 用户主动切换 → A-Select 触发自动化
+        - source="auto": HA 命令的回包 → A-Select 静默等待复位
+        """
+        data = event.data
+        serial = data.get("serial_number")
+        page = data.get("page")
+        source = data.get("source", "user")
+        if not serial or not page:
+            return
+        # 存储当前页
+        library = hass.data.setdefault(DOMAIN, {}).setdefault("library", {"devices": {}})
+        gateways = library.setdefault("gateways", {})
+        gateways.setdefault(serial, {})["current_page"] = page
+        await hass.data[DOMAIN]["store"].async_save(library)
+        _LOGGER.info("网关 %s 页面访问: %s (source=%s)", serial, page, source)
+        # A-Select: 是否触发自动化取决于 source  |  B-Select: 同步当前值
+        refs = hass.data.get(DOMAIN, {}).get("_selects", {}).get(serial, {})
+        nav = refs.get("navigate")
+        sc  = refs.get("scene")
+        if nav:
+            await nav.trigger_from_apk(page, source)
+        if sc:
+            sc.sync_from_apk(page)
+
+    hass.bus.async_listen(f"{DOMAIN}/page_visited", _handle_page_visited)
     
     return True
 
@@ -104,8 +151,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     websocket_api.async_register_command(hass, websocket_get_device_codes)
     websocket_api.async_register_command(hass, websocket_get_harmony_config)
 
-    # 加载遥控器实体平台
-    await hass.config_entries.async_forward_entry_setups(entry, ["remote"])
+    # 加载遥控器实体平台 + 网关场景选择器
+    await hass.config_entries.async_forward_entry_setups(entry, ["remote", "select"])
     
     # 注册红外服务
     hass.services.async_register(DOMAIN, "discover_all", handle_discover_all)
@@ -120,7 +167,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
 # ====================== 2. 卸载与设备删除 ======================
 async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
-    unload_ok = await hass.config_entries.async_unload_platforms(entry, ["remote"])
+    unload_ok = await hass.config_entries.async_unload_platforms(entry, ["remote", "select"])
     if unload_ok and len(hass.config_entries.async_entries(DOMAIN)) == 1:
         hass.services.async_remove(DOMAIN, "discover_all")
         hass.services.async_remove(DOMAIN, "send_command")
