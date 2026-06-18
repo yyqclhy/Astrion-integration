@@ -21,19 +21,19 @@
     "step": {
       "depot": {
         "title": "选择红外库",
-        "description": "{desc}"
+        "description": "请选择要添加设备的红外库"
       },
       "category": {
         "title": "选择设备类型",
-        "description": "{desc}"
+        "description": "请选择设备类型（如电视、空调等）"
       },
       "brand": {
         "title": "选择品牌",
-        "description": "{desc}"
+        "description": "请选择设备品牌"
       },
       "drive_list": {
         "title": "选择驱动型号",
-        "description": "{desc}"
+        "description": "共找到 {count} 个驱动，请选择要添加的设备"
       }
     },
     "abort": {
@@ -45,10 +45,10 @@
   "entity": {
     "select": {
       "navigate": {
-        "name": "导航事件"
+        "name": "Navigate Event"
       },
       "scene": {
-        "name": "导航动作"
+        "name": "Navigate Action"
       }
     }
   }

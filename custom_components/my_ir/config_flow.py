@@ -270,9 +270,7 @@ class MyIROptionsFlowHandler(config_entries.OptionsFlow):
                     selector.SelectSelectorConfig(options=self._depot_opts, mode="dropdown", custom_value=True)
                 )
             }),
-            description_placeholders={
-                "desc": "请选择要添加设备的红外库"
-            }
+            description_placeholders={}
         )
 
     # ------------------------------------------------------------------
@@ -312,9 +310,7 @@ class MyIROptionsFlowHandler(config_entries.OptionsFlow):
                     selector.SelectSelectorConfig(options=self._cat_opts, mode="dropdown", custom_value=True)
                 )
             }),
-            description_placeholders={
-                "desc": "请选择设备类型（如电视、空调等）"
-            }
+            description_placeholders={}
         )
 
     # ------------------------------------------------------------------
@@ -354,9 +350,7 @@ class MyIROptionsFlowHandler(config_entries.OptionsFlow):
                     selector.SelectSelectorConfig(options=self._brand_opts, mode="dropdown", custom_value=True)
                 )
             }),
-            description_placeholders={
-                "desc": "请选择设备品牌"
-            }
+            description_placeholders={}
         )
 
     # ------------------------------------------------------------------
@@ -430,7 +424,7 @@ class MyIROptionsFlowHandler(config_entries.OptionsFlow):
                 )
             }),
             description_placeholders={
-                "desc": f"共找到 {len(self._all_drives)} 个驱动，请选择要添加的设备"
+                "count": str(len(self._all_drives))
             }
         )
 

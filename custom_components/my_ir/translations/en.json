@@ -21,19 +21,19 @@
     "step": {
       "depot": {
         "title": "Select IR Library",
-        "description": "{desc}"
+        "description": "Please select the IR library for the device you want to add"
       },
       "category": {
         "title": "Select Device Type",
-        "description": "{desc}"
+        "description": "Please select the device type (e.g. TV, AC, etc.)"
       },
       "brand": {
         "title": "Select Brand",
-        "description": "{desc}"
+        "description": "Please select the device brand"
       },
       "drive_list": {
         "title": "Select Driver Model",
-        "description": "{desc}"
+        "description": "Found {count} driver(s), please select the device to add"
       }
     },
     "abort": {
