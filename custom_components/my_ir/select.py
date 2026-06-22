@@ -254,7 +254,7 @@ class GatewaySceneSelect(SelectEntity):
         new_state = event.data.get("new_state")
         if new_state and new_state.state:
             self._current = new_state.state
-            _LOGGER.info("网关 %s 外部状态变更: %s", self._serial, new_state.state)
+            _LOGGER.info("Gateway %s external state change: %s", self._serial, new_state.state)
             self.hass.bus.async_fire(f"{DOMAIN}/navigate_to", {
                 "serial_number": self._serial,
                 "target_page": new_state.state,

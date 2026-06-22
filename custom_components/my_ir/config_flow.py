@@ -34,7 +34,7 @@ class MyIRConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         websocket_api.async_register_command(self.hass, websocket_submit_pair_data)
         websocket_api.async_register_command(self.hass, websocket_get_device_codes)
         websocket_api.async_register_command(self.hass, websocket_get_harmony_config)
-        _LOGGER.info("【config_flow】WebSocket 处理器已在配置流程中注册")
+        _LOGGER.info("[config_flow] WebSocket handler registered during config flow")
         
         # 开始新配对前，清理上次残留的发现列表
         self.hass.data.setdefault(DOMAIN, {}).pop("discovered_gateways", None)
@@ -47,15 +47,15 @@ class MyIRConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             "source": "config_flow"
         })
         _LOGGER.info(
-            "【配对】已广播 pair_request 事件 (%s/pair_request)，等待 App 响应 8 秒… "
-            "请确保 App 已登录且与 HA 的 WebSocket 连接正常", DOMAIN
+            "[Pair] Broadcast pair_request event (%s/pair_request), waiting 8s for App response… "
+            "Please ensure App is logged in and connected to HA via WebSocket", DOMAIN
         )
         
         # 等待 8 秒让 App 响应
         await asyncio.sleep(8)
         
         discovered = self.hass.data.get(DOMAIN, {}).get("discovered_gateways", {})
-        _LOGGER.info("5秒后发现列表有 %d 个网关: %s", len(discovered), list(discovered.keys()))
+        _LOGGER.info("Discovered %d gateways after 5s: %s", len(discovered), list(discovered.keys()))
         
         # 进入发现步骤
         return await self.async_step_discover()
@@ -78,11 +78,11 @@ class MyIRConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                     }
                 )
 
-        _LOGGER.info("【discover最终检查】discovered_gateways=%s, len=%d", dict(discovered), len(discovered))
+        _LOGGER.info("[discover] Final check — discovered_gateways=%s, len=%d", dict(discovered), len(discovered))
         
         # 检查是否有发现的网关
         if discovered:
-            _LOGGER.info("【discover】有发现！显示选择列表，共 %d 个", len(discovered))
+            _LOGGER.info("[discover] Gateways found! Showing selection list, count=%d", len(discovered))
             options = [
                 {"value": s, "label": f"Smart Remote:{d.get('model','IR Gateway')} SN:{s}"}
                 for s, d in discovered.items()
@@ -99,7 +99,7 @@ class MyIRConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 }
             )
         else:
-            _LOGGER.info("【discover】无发现，显示重试界面")
+            _LOGGER.info("[discover] No gateways found, showing retry screen")
             # 无发现，显示重试界面
             return self.async_show_form(
                 step_id="discover_retry",
@@ -129,11 +129,11 @@ class MyIRConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 "timestamp": datetime.utcnow().isoformat(),
                 "source": "config_flow"
             })
-            _LOGGER.info("【重试】用户要求重新搜索网关，等待 8 秒…")
+            _LOGGER.info("[Retry] User requested re-discovery, waiting 8s…")
             await asyncio.sleep(8)
 
             discovered = self.hass.data.get(DOMAIN, {}).get("discovered_gateways", {})
-            _LOGGER.info("【重试】发现列表: %d 个网关", len(discovered))
+            _LOGGER.info("[Retry] Discovered %d gateways", len(discovered))
 
             if discovered:
                 options = [
@@ -154,9 +154,9 @@ class MyIRConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
         # 仍然无发现，或用户未勾选重试——再次显示重试界面
         if not user_input.get("retry"):
-            _LOGGER.info("【重试】用户未勾选「重新搜索」，保持重试界面")
+            _LOGGER.info("[Retry] User did not check 'Retry', staying on retry screen")
         else:
-            _LOGGER.warning("【重试】重试后仍无发现，请检查 App 是否在线")
+            _LOGGER.warning("[Retry] No gateways found after retry, please check if App is online")
 
         return self.async_show_form(
             step_id="discover_retry",
@@ -201,9 +201,9 @@ class MyIROptionsFlowHandler(config_entries.OptionsFlow):
             async with session.get(url, params=params, timeout=15) as resp:
                 if resp.status == 200:
                     return await resp.json(content_type=None)
-                _LOGGER.error("API请求失败 [%s] %s: %s", resp.status, url, await resp.text()[:200])
+                _LOGGER.error("API request failed [%s] %s: %s", resp.status, url, await resp.text()[:200])
         except Exception as e:
-            _LOGGER.error("API请求异常 %s: %s", url, e)
+            _LOGGER.error("API request exception %s: %s", url, e)
         return {}
 
     @staticmethod
@@ -245,7 +245,7 @@ class MyIROptionsFlowHandler(config_entries.OptionsFlow):
                 return await self.async_step_depot()
             self._depot_id = self._depot_id_map[selected]
             self._depot_name = selected
-            _LOGGER.info("已选择库: %s (%s)", self._depot_name, self._depot_id)
+            _LOGGER.info("Selected depot: %s (%s)", self._depot_name, self._depot_id)
             return await self.async_step_category()
 
         data = await self._api_get("/rc/app/depot/list")
@@ -258,7 +258,7 @@ class MyIROptionsFlowHandler(config_entries.OptionsFlow):
         self._depot_opts = []
         for d in depots:
             did = str(d.get("depotId") or d.get("id"))
-            dname = d.get("depotName") or d.get("name") or "未知库"
+            dname = d.get("depotName") or d.get("name") or "Unknown"
             if did:
                 self._depot_opts.append({"value": dname, "label": dname})
                 self._depot_id_map[dname] = did
@@ -285,7 +285,7 @@ class MyIROptionsFlowHandler(config_entries.OptionsFlow):
                 return await self.async_step_category()
             self._category_id = self._cat_id_map[selected]
             self._category_name = selected
-            _LOGGER.info("已选择分类: %s (%s)", self._category_name, self._category_id)
+            _LOGGER.info("Selected category: %s (%s)", self._category_name, self._category_id)
             return await self.async_step_brand()
 
         data = await self._api_get("/rc/app/category/list")
@@ -298,7 +298,7 @@ class MyIROptionsFlowHandler(config_entries.OptionsFlow):
         self._cat_opts = []
         for c in categories:
             cid = str(c.get("categoryId") or c.get("id") or c.get("category_id"))
-            cname = c.get("categoryName") or c.get("name") or "未知分类"
+            cname = c.get("categoryName") or c.get("name") or "Unknown"
             if cid:
                 self._cat_opts.append({"value": cname, "label": cname})
                 self._cat_id_map[cname] = cid
@@ -325,7 +325,7 @@ class MyIROptionsFlowHandler(config_entries.OptionsFlow):
                 return await self.async_step_brand()
             self._brand_id = self._brand_id_map[selected]
             self._brand_name = selected
-            _LOGGER.info("已选择品牌: %s (%s)", self._brand_name, self._brand_id)
+            _LOGGER.info("Selected brand: %s (%s)", self._brand_name, self._brand_id)
             return await self.async_step_drive_list()
 
         data = await self._api_get("/rc/app/brand/all")
@@ -338,7 +338,7 @@ class MyIROptionsFlowHandler(config_entries.OptionsFlow):
         self._brand_opts = []
         for b in brands:
             bid = str(b.get("brandId") or b.get("id"))
-            bname = b.get("brandName") or b.get("name") or "未知品牌"
+            bname = b.get("brandName") or b.get("name") or "Unknown"
             if bid:
                 self._brand_opts.append({"value": bname, "label": bname})
                 self._brand_id_map[bname] = bid
@@ -385,7 +385,7 @@ class MyIROptionsFlowHandler(config_entries.OptionsFlow):
                 break
 
             self._all_drives.extend(rows)
-            _LOGGER.info("驱动列表第%d页: 获取到%d条", page_num, len(rows))
+            _LOGGER.info("Drive list page %d: got %d entries", page_num, len(rows))
 
             # 如果这一页返回少于 pageSize 条，说明已到最后一页，停止
             if len(rows) < page_size:
@@ -394,7 +394,7 @@ class MyIROptionsFlowHandler(config_entries.OptionsFlow):
             page_num += 1
 
         if not self._all_drives:
-            _LOGGER.warning("未找到任何驱动: category=%s, depot=%s, brand=%s",
+            _LOGGER.warning("No drives found: category=%s, depot=%s, brand=%s",
                             self._category_id, self._depot_id, self._brand_id)
             return self.async_abort(reason="no_drives_found")
 
@@ -403,8 +403,8 @@ class MyIROptionsFlowHandler(config_entries.OptionsFlow):
         self._drive_label_map = {}
         for i, d in enumerate(self._all_drives):
             brand_name = d.get("brand", {}).get("brandName", "")
-            model = d.get("modelName", "未知型号")
-            official = "官方" if d.get("isOfficial") == 1 else "个人"
+            model = d.get("modelName", "Unknown Model")
+            official = "Official" if d.get("isOfficial") == 1 else "Custom"
             label = f"{model}"
             if brand_name:
                 label = f"{brand_name} {model}"
@@ -436,12 +436,12 @@ class MyIROptionsFlowHandler(config_entries.OptionsFlow):
         """获取驱动详情，解析data中的commands，保存为红外remote实体"""
         drive_id = drive_data.get("driveId")
         if not drive_id:
-            _LOGGER.error("驱动数据缺少driveId")
+            _LOGGER.error("Drive data missing driveId")
             return self.async_abort(reason="cloud_fetch_failed")
 
         # 1. 获取驱动详情（可能包装在 {code, msg, data: {...}} 中）
         detail = await self._api_get(f"/rc/app/drive/{drive_id}")
-        _LOGGER.debug("驱动 %s 详情原始响应: %s", drive_id, str(detail)[:300])
+        _LOGGER.debug("Drive %s detail raw response: %s", drive_id, str(detail)[:300])
 
         commands = {}
 
@@ -460,13 +460,13 @@ class MyIROptionsFlowHandler(config_entries.OptionsFlow):
                     data_obj = json.loads(data_field)
                     commands = data_obj.get("commands", {})
                 except json.JSONDecodeError:
-                    _LOGGER.warning("驱动 %s 的data字段不是有效JSON: %s…", drive_id, data_field[:120])
+                    _LOGGER.warning("Drive %s data field is not valid JSON: %s…", drive_id, data_field[:120])
             elif isinstance(data_field, dict):
                 # data 字段本身已经是字典对象
                 commands = data_field.get("commands", {})
 
         if not commands:
-            _LOGGER.warning("未能从驱动 %s 提取到commands，将创建空按键的遥控器", drive_id)
+            _LOGGER.warning("Could not extract commands from drive %s, creating remote with empty keys", drive_id)
 
         # 3. 构建设备信息
         library = self.hass.data[DOMAIN].setdefault("library", {"devices": {}})
@@ -475,7 +475,7 @@ class MyIROptionsFlowHandler(config_entries.OptionsFlow):
         # 唯一序列号（融合父网关串号 + driveId）
         serial = f"IR_{parent_app_serial}_{drive_id}"
 
-        model_name = drive_data.get("modelName", "未知型号")
+        model_name = drive_data.get("modelName", "Unknown Model")
         brand_name = drive_data.get("brand", {}).get("brandName", "")
         device_name = f"Sanytron {brand_name} {model_name}" if brand_name else f"Sanytron {model_name}"
 
@@ -503,5 +503,5 @@ class MyIROptionsFlowHandler(config_entries.OptionsFlow):
             self.hass.config_entries.async_reload(self.config_entry.entry_id)
         )
 
-        _LOGGER.info("成功挂载红外设备: %s (%d个按键)", device_name, len(commands))
-        return self.async_create_entry(title=f"已挂载: {device_name}", data={})
+        _LOGGER.info("Successfully mounted IR device: %s (%d keys)", device_name, len(commands))
+        return self.async_create_entry(title=f"Mounted: {device_name}", data={})

@@ -7,7 +7,7 @@
       },
       "discover_retry": {
         "title": "Retry Discovery",
-        "description": "No gateway found…\n\nMake sure your remote is logged into HA and on the same LAN.\nCheck \"Retry\" and submit to broadcast again and wait 5 seconds."
+        "description": "No gateway found…\n\nMake sure your remote is logged into HA and on the same LAN.\nCheck \"Retry\" and submit to broadcast again and wait 8 seconds."
       }
     },
     "abort": {
