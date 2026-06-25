@@ -1,4 +1,4 @@
-from homeassistant import config_entries
+﻿from homeassistant import config_entries
 from homeassistant.data_entry_flow import FlowResult
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.core import callback
@@ -254,14 +254,24 @@ class MyIROptionsFlowHandler(config_entries.OptionsFlow):
         if not depots:
             return self.async_abort(reason="cloud_fetch_failed")
 
+        # 判断用户界面是否为中文（使用服务器配置语言）
+        is_chinese = (self.hass.config.language or "").startswith("zh")
+        _LOGGER.error("===DEBUG=== is_chinese=%s, config.language=%s",
+                      is_chinese, self.hass.config.language)
+
         self._depot_id_map = {}
         self._depot_opts = []
         for d in depots:
             did = str(d.get("depotId") or d.get("id"))
             dname = d.get("depotName") or d.get("name") or "Unknown"
             if did:
-                self._depot_opts.append({"value": dname, "label": dname})
-                self._depot_id_map[dname] = did
+                value = dname
+                label = dname
+                if dname == "红外" and not is_chinese:
+                    value = "Infrared"
+                    label = "Infrared"
+                self._depot_opts.append({"value": value, "label": label})
+                self._depot_id_map[value] = did
 
         return self.async_show_form(
             step_id="depot",
