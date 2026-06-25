@@ -4,7 +4,7 @@ from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.core import callback
 import voluptuous as vol
 from .const import DOMAIN
-from homeassistant.helpers import selector, translation
+from homeassistant.helpers import selector
 import logging
 import json
 import asyncio
@@ -254,27 +254,6 @@ class MyIROptionsFlowHandler(config_entries.OptionsFlow):
         if not depots:
             return self.async_abort(reason="cloud_fetch_failed")
 
-        # 使用 HA 翻译系统获取当前用户语言下的“红外库”显示名称
-        # 显式从 context 获取当前用户的语言
-        user_language = None
-        uid = self.context.get("user_id")
-        if uid:
-            try:
-                u = await self.hass.auth.async_get_user(uid)
-                if u and u.language:
-                    user_language = u.language
-            except Exception:
-                pass
-        trans = await translation.async_get_translations(
-            self.hass, user_language, DOMAIN, {"options"}
-        )
-        infrared_label = trans.get(
-            f"component.{DOMAIN}.options.lib_name_infrared",
-            "红外"  # 兜底
-        )
-        _LOGGER.error("===LANG uid=%s, user_language=%s, infrared_label=%s",
-                      uid, user_language, infrared_label)
-
         self._depot_id_map = {}
         self._depot_opts = []
         for d in depots:
@@ -284,8 +263,8 @@ class MyIROptionsFlowHandler(config_entries.OptionsFlow):
                 value = dname
                 label = dname
                 if dname == "红外":
-                    value = infrared_label
-                    label = infrared_label
+                    value = "Infrared"
+                    label = "Infrared"
                 self._depot_opts.append({"value": value, "label": label})
                 self._depot_id_map[value] = did
 
