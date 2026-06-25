@@ -18,6 +18,7 @@
     }
   },
   "options": {
+    "lib_name_infrared": "Infrared",
     "step": {
       "depot": {
         "title": "Select IR Library",

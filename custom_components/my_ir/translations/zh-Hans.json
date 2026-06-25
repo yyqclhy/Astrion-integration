@@ -18,6 +18,7 @@
     }
   },
   "options": {
+    "lib_name_infrared": "红外",
     "step": {
       "depot": {
         "title": "选择红外库",
