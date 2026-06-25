@@ -254,10 +254,36 @@ class MyIROptionsFlowHandler(config_entries.OptionsFlow):
         if not depots:
             return self.async_abort(reason="cloud_fetch_failed")
 
-        # 判断用户界面是否为中文（使用服务器配置语言）
-        is_chinese = (self.hass.config.language or "").startswith("zh")
-        _LOGGER.error("===DEBUG=== is_chinese=%s, config.language=%s",
-                      is_chinese, self.hass.config.language)
+        # 判断用户界面是否中文（多路径获取）
+        # 优先级：当前用户语言 > 前端模块语言 > 服务器配置语言
+        is_chinese = True  # 保守默认：假设中文
+        try:
+            # 路径1: 从 flow context 获取当前用户
+            uid = self.context.get("user_id")
+            if uid:
+                u = await self.hass.auth.async_get_user(uid)
+                if u and u.language:
+                    is_chinese = u.language.startswith("zh")
+                    _LOGGER.error("===LANG user=%s, lang=%s, is_chinese=%s", uid, u.language, is_chinese)
+            # 路径2: 从前端模块获取用户界面语言
+            if not is_chinese:
+                from homeassistant.components import frontend as fe
+                cfg = self.hass.data.get(fe.DOMAIN, {})
+                fl = cfg.language if hasattr(cfg, 'language') else None
+                if fl:
+                    is_chinese = fl.startswith("zh")
+                    _LOGGER.error("===LANG frontend_lang=%s, is_chinese=%s", fl, is_chinese)
+            # 路径3: 服务器配置（保底）
+            if not is_chinese:
+                sl = self.hass.config.language
+                if sl:
+                    is_chinese = sl.startswith("zh")
+                    _LOGGER.error("===LANG server_lang=%s, is_chinese=%s", sl, is_chinese)
+        except Exception as e:
+            _LOGGER.error("===LANG exception=%s", e, exc_info=True)
+            is_chinese = (self.hass.config.language or "").startswith("zh")
+
+        _LOGGER.error("===LANG final is_chinese=%s", is_chinese)
 
         self._depot_id_map = {}
         self._depot_opts = []
