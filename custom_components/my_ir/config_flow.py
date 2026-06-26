@@ -1,4 +1,4 @@
-from homeassistant import config_entries
+﻿from homeassistant import config_entries
 from homeassistant.data_entry_flow import FlowResult
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.core import callback
@@ -252,8 +252,13 @@ class MyIROptionsFlowHandler(config_entries.OptionsFlow):
             did = str(d.get("depotId") or d.get("id"))
             dname = d.get("depotName") or d.get("name") or "未知库"
             if did:
-                self._depot_opts.append({"value": dname, "label": dname})
-                self._depot_id_map[dname] = did
+                value = dname
+                label = dname
+                if dname == "红外":
+                    value = "IR"
+                    label = "IR"
+                self._depot_opts.append({"value": value, "label": label})
+                self._depot_id_map[value] = did
 
         return self.async_show_form(
             step_id="depot",
