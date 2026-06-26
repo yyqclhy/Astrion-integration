@@ -263,8 +263,8 @@ class MyIROptionsFlowHandler(config_entries.OptionsFlow):
                 value = dname
                 label = dname
                 if dname == "红外":
-                    value = "Infrared"
-                    label = "Infrared"
+                    value = "IR"
+                    label = "IR"
                 self._depot_opts.append({"value": value, "label": label})
                 self._depot_id_map[value] = did
 
