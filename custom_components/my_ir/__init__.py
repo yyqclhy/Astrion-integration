@@ -16,10 +16,11 @@ _LOGGER = logging.getLogger(__name__)
 
 STORAGE_VERSION = 1
 STORAGE_KEY = f"{DOMAIN}.library"
+PLATFORMS = ["remote", "select", "button"]
 
 # ====================== 1. 核心初始化 ======================
 async def async_setup(hass: HomeAssistant, config: dict) -> bool:
-    _LOGGER.info("【启动】async_setup 被调用了！config=%s", config)
+    _LOGGER.info("[Startup] async_setup called! config=%s", config)
     
     # 延迟导入，避免模块加载时的依赖问题
     from homeassistant.components.http import HomeAssistantView
@@ -51,7 +52,7 @@ async def async_setup(hass: HomeAssistant, config: dict) -> bool:
 
             if not conf_files:
                 return self.json(
-                    {"error": "未在配置目录中找到 harmony_*.conf 文件"},
+                    {"error": "No harmony_*.conf files found in config directory"},
                     status_code=404
                 )
 
@@ -59,7 +60,7 @@ async def async_setup(hass: HomeAssistant, config: dict) -> bool:
                 def read_all_files():
                     hubs = []
                     for path in conf_files:
-                        _LOGGER.info("读取 Harmony 配置文件: %s", path)
+                        _LOGGER.info("Reading Harmony config file: %s", path)
                         with open(path, 'r', encoding='utf-8') as f:
                             data = json.load(f)
                         basename = os.path.basename(path)
@@ -75,17 +76,17 @@ async def async_setup(hass: HomeAssistant, config: dict) -> bool:
                 return self.json({"hubs": hubs})
 
             except Exception as e:
-                _LOGGER.error("读取 Harmony 配置文件失败: %s", e)
+                _LOGGER.error("Failed to read Harmony config file: %s", e)
                 return self.json({"error": str(e)}, status_code=500)
 
     hass.http.register_view(HarmonyConfigView(hass))
     
     # 【关键】注册 WebSocket 处理器（必须在 config_entry 存在之前就注册，否则首次添加集成时 App 消息无处理器）
-    _LOGGER.info("【启动】开始注册 WebSocket 处理器…")
+    _LOGGER.info("[Startup] Registering WebSocket handlers…")
     websocket_api.async_register_command(hass, websocket_submit_pair_data)
     websocket_api.async_register_command(hass, websocket_get_device_codes)
     websocket_api.async_register_command(hass, websocket_get_harmony_config)
-    _LOGGER.info("【启动】WebSocket 处理器注册成功！")
+    _LOGGER.info("[Startup] WebSocket handlers registered successfully!")
 
     # 监听 APK 通过 fire_event 上报的导航列表
     async def _handle_navigate_list_upload(event):
@@ -99,7 +100,7 @@ async def async_setup(hass: HomeAssistant, config: dict) -> bool:
         gateways = library.setdefault("gateways", {})
         gateways.setdefault(serial, {})["pages"] = pages
         await hass.data[DOMAIN]["store"].async_save(library)
-        _LOGGER.info("网关 %s 导航列表上报: %s", serial, pages)
+        _LOGGER.info("Gateway %s navigate list uploaded: %s", serial, pages)
         hass.bus.async_fire(f"{DOMAIN}/navigate_list_updated", {
             "serial_number": serial,
             "pages": pages,
@@ -125,7 +126,7 @@ async def async_setup(hass: HomeAssistant, config: dict) -> bool:
         gateways = library.setdefault("gateways", {})
         gateways.setdefault(serial, {})["current_page"] = page
         await hass.data[DOMAIN]["store"].async_save(library)
-        _LOGGER.info("网关 %s 页面访问: %s (source=%s)", serial, page, source)
+        _LOGGER.info("Gateway %s page visited: %s (source=%s)", serial, page, source)
         # A-Select: 是否触发自动化取决于 source  |  B-Select: 同步当前值
         refs = hass.data.get(DOMAIN, {}).get("_selects", {}).get(serial, {})
         nav = refs.get("navigate")
@@ -152,7 +153,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     websocket_api.async_register_command(hass, websocket_get_harmony_config)
 
     # 加载遥控器实体平台 + 网关场景选择器
-    await hass.config_entries.async_forward_entry_setups(entry, ["remote", "select"])
+    await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
     
     # 注册红外服务
     hass.services.async_register(DOMAIN, "discover_all", handle_discover_all)
@@ -167,7 +168,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
 # ====================== 2. 卸载与设备删除 ======================
 async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
-    unload_ok = await hass.config_entries.async_unload_platforms(entry, ["remote", "select"])
+    unload_ok = await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
     if unload_ok and len(hass.config_entries.async_entries(DOMAIN)) == 1:
         hass.services.async_remove(DOMAIN, "discover_all")
         hass.services.async_remove(DOMAIN, "send_command")
@@ -200,7 +201,7 @@ async def async_remove_config_entry_device(
             new_data["devices"].pop(serial, None)
             hass.config_entries.async_update_entry(config_entry, data=new_data)
             
-        _LOGGER.info("通过集成页面成功移除设备: %s", serial)
+        _LOGGER.info("Successfully removed device via integration page: %s", serial)
         return True
     return False
 
@@ -224,19 +225,19 @@ def handle_send_command(call: ServiceCall) -> None:
     # 获取实体状态对象
     state = hass.states.get(entity_id)
     if not state:
-        _LOGGER.warning("实体不存在: %s", entity_id)
+        _LOGGER.warning("Entity does not exist: %s", entity_id)
         return
 
     # 检查是否是自定义红外实体
     domain, _ = entity_id.split(".", 1)
     if domain != "remote":
-        _LOGGER.debug("不是红外实体: %s", entity_id)
+        _LOGGER.debug("Not an IR entity: %s", entity_id)
         return
 
     # 从实体属性获取父级网关串号
     parent_serial = state.attributes.get("parent_app_serial")
     if not parent_serial:
-        _LOGGER.warning("红外实体 %s 没有父网关串号", entity_id)
+        _LOGGER.warning("IR entity %s has no parent gateway serial", entity_id)
         return
 
     # 获取按键 IR 码
@@ -250,7 +251,7 @@ def handle_send_command(call: ServiceCall) -> None:
         "button": actual_ir_code,
         "timestamp": datetime.utcnow().isoformat(),
     })
-    _LOGGER.info("红外控制命令发送: %s -> 父网关 %s -> 按键 %s",
+    _LOGGER.info("IR control command sent: %s -> parent gateway %s -> button %s",
                  entity_id, parent_serial, actual_ir_code)
 
 # ====================== 4. WebSocket 接口定义 ======================
@@ -262,14 +263,18 @@ def handle_send_command(call: ServiceCall) -> None:
 @websocket_api.async_response
 async def websocket_submit_pair_data(hass: HomeAssistant, connection, msg):
     """App 上报配对数据的接口（存入发现列表，等待用户在配置流程中选择）"""
-    _LOGGER.info("【配对我收到消息啦】原始消息: %s", str(msg)[:500])
+    _LOGGER.info("[Pair] Message received! Raw message: %s", str(msg)[:500])
     
     data = msg["data"]
     app_serial = data.get("serial_number")
-    _LOGGER.info("【配对】serial_number=%s, model=%s, 完整data=%s", app_serial, data.get("model"), str(data)[:300])
+    _LOGGER.info("[Pair] serial_number=%s, model=%s, full data=%s", app_serial, data.get("model"), str(data)[:300])
     
     if not app_serial:
-        connection.send_error(msg["id"], "missing_serial", "缺少 serial_number")
+        _LOGGER.warning(
+            "[Pair Error] App reported data missing serial_number, cannot store in discovery list. "
+            "Full message: %s", str(msg)[:500]
+        )
+        connection.send_error(msg["id"], "missing_serial", "Missing serial_number")
         return
 
     entries = hass.config_entries.async_entries(DOMAIN)
@@ -277,7 +282,8 @@ async def websocket_submit_pair_data(hass: HomeAssistant, connection, msg):
     # 查重：App 已存在则无需再次发现
     for entry in entries:
         if entry.data.get("app_serial") == app_serial:
-            connection.send_result(msg["id"], {"success": True, "message": "App 已存在，无需重复配对"})
+            _LOGGER.info("[Pair] App serial %s already has a config entry, skipping duplicate pairing", app_serial)
+            connection.send_result(msg["id"], {"success": True, "message": "App already exists, no need to pair again"})
             return
 
     # 存入发现列表，等待用户在配置流程中选择
@@ -297,11 +303,11 @@ async def websocket_submit_pair_data(hass: HomeAssistant, connection, msg):
         "model": model,
     })
     
-    _LOGGER.info("发现新网关: Smart Remote:%s SN:%s (已存入待选列表)", model, app_serial)
+    _LOGGER.info("Discovered new gateway: Smart Remote:%s SN:%s (saved to pending list)", model, app_serial)
     connection.send_result(msg["id"], {
         "success": True,
         "serial": app_serial,
-        "message": "网关已加入待选列表，请在 HA 配置界面中选择确认"
+        "message": "Gateway added to pending list, please confirm in HA configuration"
     })
 
 @websocket_api.websocket_command({
@@ -336,7 +342,7 @@ async def websocket_get_device_codes(hass: HomeAssistant, connection, msg):
             target_data = devices[entry.unique_id]
 
     if not target_data:
-        connection.send_error(msg["id"], "not_found", f"未找到对应实体: {entity_id}")
+        connection.send_error(msg["id"], "not_found", f"Entity not found: {entity_id}")
         return
         
     connection.send_result(msg["id"], {
@@ -372,7 +378,7 @@ async def websocket_get_harmony_config(hass: HomeAssistant, connection, msg):
             entry = registry.async_get(entity_id)
             if entry:
                 target_unique_id = entry.unique_id
-                _LOGGER.debug("Harmony 实体 %s → unique_id: %s", entity_id, target_unique_id)
+                _LOGGER.debug("Harmony entity %s → unique_id: %s", entity_id, target_unique_id)
 
         hubs = []
         for path in all_files:
@@ -383,7 +389,7 @@ async def websocket_get_harmony_config(hass: HomeAssistant, connection, msg):
             if target_unique_id and file_id != target_unique_id:
                 continue
 
-            _LOGGER.info("读取 Harmony 配置文件: %s", path)
+            _LOGGER.info("Reading Harmony config file: %s", path)
             with open(path, 'r', encoding='utf-8') as f:
                 data = json.load(f)
             hubs.append({
@@ -395,6 +401,6 @@ async def websocket_get_harmony_config(hass: HomeAssistant, connection, msg):
         connection.send_result(msg["id"], {"hubs": hubs})
 
     except Exception as e:
-        _LOGGER.error("读取 Harmony 配置文件失败: %s", e)
+        _LOGGER.error("Failed to read Harmony config file: %s", e)
         connection.send_error(msg["id"], "read_error", str(e))
 
