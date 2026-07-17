@@ -43,6 +43,11 @@
     }
   },
   "entity": {
+    "button": {
+      "refresh": {
+        "name": "刷新"
+      }
+    },
     "select": {
       "navigate": {
         "name": "Navigate Event"

@@ -43,6 +43,11 @@
     }
   },
   "entity": {
+    "button": {
+      "refresh": {
+        "name": "Refresh"
+      }
+    },
     "select": {
       "navigate": {
         "name": "Navigate Event"

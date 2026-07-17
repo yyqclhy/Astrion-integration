@@ -2,7 +2,7 @@
   "domain": "astrion",
   "name": "Astrion Home",
   "codeowners": ["yyqclhy"],
-  "version": "v1.3.0",
+  "version": "v1.4.1",
   "iot_class": "local_push",
   "config_flow": true,
   "documentation": "https://github.com/yyqclhy/Astrion-integration",
