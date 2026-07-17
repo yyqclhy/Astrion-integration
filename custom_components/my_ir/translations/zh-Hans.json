@@ -45,7 +45,7 @@
   "entity": {
     "button": {
       "refresh": {
-        "name": "刷新"
+        "name": "遥控器数据同步"
       }
     },
     "select": {

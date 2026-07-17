@@ -45,7 +45,7 @@
   "entity": {
     "button": {
       "refresh": {
-        "name": "Refresh"
+        "name": "Remote Data Sync"
       }
     },
     "select": {
