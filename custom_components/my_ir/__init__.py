@@ -16,6 +16,7 @@ _LOGGER = logging.getLogger(__name__)
 
 STORAGE_VERSION = 1
 STORAGE_KEY = f"{DOMAIN}.library"
+PLATFORMS = ["remote", "select", "button"]
 
 # ====================== 1. 核心初始化 ======================
 async def async_setup(hass: HomeAssistant, config: dict) -> bool:
@@ -152,7 +153,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     websocket_api.async_register_command(hass, websocket_get_harmony_config)
 
     # 加载遥控器实体平台 + 网关场景选择器
-    await hass.config_entries.async_forward_entry_setups(entry, ["remote", "select"])
+    await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
     
     # 注册红外服务
     hass.services.async_register(DOMAIN, "discover_all", handle_discover_all)
@@ -167,7 +168,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
 # ====================== 2. 卸载与设备删除 ======================
 async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
-    unload_ok = await hass.config_entries.async_unload_platforms(entry, ["remote", "select"])
+    unload_ok = await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
     if unload_ok and len(hass.config_entries.async_entries(DOMAIN)) == 1:
         hass.services.async_remove(DOMAIN, "discover_all")
         hass.services.async_remove(DOMAIN, "send_command")
