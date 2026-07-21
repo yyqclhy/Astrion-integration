@@ -124,6 +124,14 @@ async def async_setup(hass: HomeAssistant, config: dict) -> bool:
         # 存储当前页
         library = hass.data.setdefault(DOMAIN, {}).setdefault("library", {"devices": {}})
         gateways = library.setdefault("gateways", {})
+        known_pages = gateways.get(serial, {}).get("pages", [])
+        if page not in known_pages:
+            _LOGGER.warning(
+                "Gateway %s ignored page_visited value not in uploaded list: %s",
+                serial,
+                page,
+            )
+            return
         gateways.setdefault(serial, {})["current_page"] = page
         await hass.data[DOMAIN]["store"].async_save(library)
         _LOGGER.info("Gateway %s page visited: %s (source=%s)", serial, page, source)

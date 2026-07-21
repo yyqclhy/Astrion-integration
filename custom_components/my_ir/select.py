@@ -106,8 +106,14 @@ class GatewayNavigateSelect(SelectEntity):
         if page == SENTINEL:
             return
 
+        # Only accept APK values that are present in the current options.
         if page not in self._pages:
-            self._pages = _ensure_sentinel(self._pages + [page])
+            _LOGGER.warning(
+                "Gateway %s ignored APK page not in options: %s",
+                self._serial,
+                page,
+            )
+            return
 
         if source == "auto":
             # 这是 HA 发出的 navigate_to 的回包，不重复触发自动化
@@ -209,10 +215,18 @@ class GatewaySceneSelect(SelectEntity):
             "target_page": option,
         })
 
-    # ---- APK 同步当前值 ----
+    # ---- APK 同步当前值 action----
 
     def sync_from_apk(self, value: str):
         """APK 上报 page_visited → 静默更新当前值（不触发 navigate_to）"""
+        # Only accept APK values that are present in the current options.
+        if value not in self._pages:
+            _LOGGER.warning(
+                "Gateway %s ignored APK scene value not in options: %s",
+                self._serial,
+                value,
+            )
+            return
         self._current = value
         self._state_sync_flag = True
         self.async_write_ha_state()
