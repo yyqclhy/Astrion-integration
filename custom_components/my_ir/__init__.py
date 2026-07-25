@@ -10,13 +10,22 @@ import json
 import glob
 import os
 import logging
-from .const import DOMAIN, HARMONY_CONF_PATTERN
+from .const import (
+    DOMAIN,
+    HARMONY_CONF_PATTERN,
+    BROADLINK_STORAGE_PREFIX,
+    BROADLINK_STORAGE_SUFFIX,
+)
 
 _LOGGER = logging.getLogger(__name__)
 
 STORAGE_VERSION = 1
 STORAGE_KEY = f"{DOMAIN}.library"
 PLATFORMS = ["remote", "select", "button"]
+MAX_BROADLINK_DEVICES = 100
+MAX_BROADLINK_KEYS_PER_DEVICE = 200
+MAX_BROADLINK_CODE_LENGTH = 16_384
+BROADLINK_BROADCAST_SERIAL = "broadlink_broadcast"
 
 # ====================== 1. 核心初始化 ======================
 async def async_setup(hass: HomeAssistant, config: dict) -> bool:
@@ -86,6 +95,7 @@ async def async_setup(hass: HomeAssistant, config: dict) -> bool:
     websocket_api.async_register_command(hass, websocket_submit_pair_data)
     websocket_api.async_register_command(hass, websocket_get_device_codes)
     websocket_api.async_register_command(hass, websocket_get_harmony_config)
+    websocket_api.async_register_command(hass, websocket_get_broadlink_codes)
     _LOGGER.info("[Startup] WebSocket handlers registered successfully!")
 
     # 监听 APK 通过 fire_event 上报的导航列表
@@ -159,6 +169,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     websocket_api.async_register_command(hass, websocket_submit_pair_data)
     websocket_api.async_register_command(hass, websocket_get_device_codes)
     websocket_api.async_register_command(hass, websocket_get_harmony_config)
+    websocket_api.async_register_command(hass, websocket_get_broadlink_codes)
 
     # 加载遥控器实体平台 + 网关场景选择器
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
@@ -244,9 +255,19 @@ def handle_send_command(call: ServiceCall) -> None:
 
     # 从实体属性获取父级网关串号
     parent_serial = state.attributes.get("parent_app_serial")
+    packet_format = None
     if not parent_serial:
-        _LOGGER.warning("IR entity %s has no parent gateway serial", entity_id)
-        return
+        # Broadlink remotes are not bound to an HA100.  The App protocol still
+        # requires a non-empty serial_number, so use a stable broadcast marker;
+        # Android deliberately does not route Broadlink commands by this value.
+        from homeassistant.helpers import entity_registry as er
+        entry = er.async_get(hass).async_get(entity_id)
+        if entry and entry.platform == "broadlink":
+            parent_serial = BROADLINK_BROADCAST_SERIAL
+            packet_format = "broadlink"
+        else:
+            _LOGGER.warning("IR entity %s has no parent gateway serial", entity_id)
+            return
 
     # 获取按键 IR 码
     buttons = state.attributes.get("supported_keys", {})
@@ -254,11 +275,14 @@ def handle_send_command(call: ServiceCall) -> None:
     actual_ir_code = ir_code  # 或根据你的 IR 映射字典转换
 
     # 直接发送控制命令，不再判断网关是否存在
-    hass.bus.async_fire(f"{DOMAIN}/control_command", {
+    event_data = {
         "serial_number": parent_serial,
         "button": actual_ir_code,
         "timestamp": datetime.utcnow().isoformat(),
-    })
+    }
+    if packet_format:
+        event_data["format"] = packet_format
+    hass.bus.async_fire(f"{DOMAIN}/control_command", event_data)
     _LOGGER.info("IR control command sent: %s -> parent gateway %s -> button %s",
                  entity_id, parent_serial, actual_ir_code)
 
@@ -411,4 +435,92 @@ async def websocket_get_harmony_config(hass: HomeAssistant, connection, msg):
     except Exception as e:
         _LOGGER.error("Failed to read Harmony config file: %s", e)
         connection.send_error(msg["id"], "read_error", str(e))
+
+
+@websocket_api.websocket_command({
+    vol.Required("type"): f"{DOMAIN}/get_broadlink_codes",
+    vol.Required("entity_id"): cv.entity_id,
+})
+@websocket_api.async_response
+async def websocket_get_broadlink_codes(hass: HomeAssistant, connection, msg):
+    """Return normalized Broadlink learned IR/RF codes for one remote entity.
+
+    The caller can only supply an entity_id.  The exact storage file is derived
+    from its registry unique_id, so no caller-controlled path is ever read.
+    """
+    entity_id = msg["entity_id"]
+    from homeassistant.helpers import entity_registry as er
+
+    registry = er.async_get(hass)
+    entry = registry.async_get(entity_id)
+    if not entry:
+        connection.send_error(msg["id"], "entity_not_found", "Entity was not found")
+        return
+
+    if entity_id.split(".", 1)[0] != "remote" or entry.platform != "broadlink" or not entry.unique_id:
+        connection.send_error(msg["id"], "invalid_entity", "Entity is not a Broadlink remote")
+        return
+
+    unique_id = entry.unique_id
+    storage_dir = os.path.realpath(os.path.join(hass.config.config_dir, ".storage"))
+    source_file = f"{BROADLINK_STORAGE_PREFIX}{unique_id}{BROADLINK_STORAGE_SUFFIX}"
+    source_path = os.path.realpath(os.path.join(storage_dir, source_file))
+
+    # A malformed unique_id must not turn into a path traversal.  commonpath is
+    # used instead of a string prefix to handle similarly named sibling paths.
+    try:
+        safe_path = os.path.commonpath([storage_dir, source_path]) == storage_dir
+    except ValueError:
+        safe_path = False
+    if not safe_path:
+        _LOGGER.warning("Rejected unsafe Broadlink storage path for entity %s", entity_id)
+        connection.send_error(msg["id"], "invalid_entity", "Invalid entity unique_id")
+        return
+
+    def _read_and_normalize():
+        if not os.path.isfile(source_path):
+            raise FileNotFoundError(source_file)
+        with open(source_path, "r", encoding="utf-8") as storage_file:
+            payload = json.load(storage_file)
+
+        if not isinstance(payload, dict) or not isinstance(payload.get("data"), dict):
+            raise ValueError("data is not an object")
+
+        normalized = {}
+        for device_name, device_codes in payload["data"].items():
+            if len(normalized) >= MAX_BROADLINK_DEVICES:
+                raise ValueError("too many devices")
+            if not isinstance(device_name, str) or not isinstance(device_codes, dict):
+                raise ValueError("invalid device entry")
+
+            keys = {}
+            for key_name, code in device_codes.items():
+                if len(keys) >= MAX_BROADLINK_KEYS_PER_DEVICE:
+                    raise ValueError("too many keys")
+                if not isinstance(key_name, str) or not isinstance(code, str):
+                    raise ValueError("invalid key entry")
+                if len(code) > MAX_BROADLINK_CODE_LENGTH:
+                    raise ValueError("code exceeds maximum length")
+                keys[key_name] = code
+            normalized[device_name] = keys
+        return normalized
+
+    try:
+        devices = await hass.async_add_executor_job(_read_and_normalize)
+    except FileNotFoundError:
+        _LOGGER.info("Broadlink code file not found for entity %s: %s", entity_id, source_file)
+        connection.send_error(msg["id"], "file_not_found", "Broadlink code file was not found")
+    except (json.JSONDecodeError, ValueError) as err:
+        _LOGGER.warning("Invalid Broadlink storage for entity %s (%s)", entity_id, type(err).__name__)
+        connection.send_error(msg["id"], "invalid_storage", "Broadlink storage is invalid")
+    except OSError as err:
+        _LOGGER.warning("Unable to read Broadlink storage for entity %s (%s)", entity_id, type(err).__name__)
+        connection.send_error(msg["id"], "read_error", "Unable to read Broadlink storage")
+    else:
+        connection.send_result(msg["id"], {
+            "entity_id": entity_id,
+            "unique_id": unique_id,
+            "source_file": source_file,
+            "devices": devices,
+        })
 
