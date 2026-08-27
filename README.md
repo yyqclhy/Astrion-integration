@@ -3,252 +3,528 @@
 [![HACS Default](https://img.shields.io/badge/HACS-Default-blue.svg)](https://www.hacs.xyz/)
 [![GitHub Release](https://img.shields.io/github/v/release/yyqclhy/Astrion-integration)](https://github.com/yyqclhy/Astrion-integration/releases)
 [![GitHub license](https://img.shields.io/github/license/yyqclhy/Astrion-integration)](LICENSE)
-[![HACS](https://my.home-assistant.io/badges/hacs_repository.svg)](https://my.home-assistant.io/redirect/hacs_repository/?owner=yyqclhy&repository=RosCard&category=integration)
+[![HACS](https://my.home-assistant.io/badges/hacs_repository.svg)](https://my.home-assistant.io/redirect/hacs_repository/?owner=yyqclhy&repository=Astrion-integration&category=integration)
 [![Maintenance](https://img.shields.io/badge/Maintained%3F-Yes-green.svg)](https://github.com/yyqclhy/Astrion-integration/commits/main)
 [![GitHub issues](https://img.shields.io/github/issues/yyqclhy/Astrion-integration)](https://github.com/yyqclhy/Astrion-integration/issues)
 [![GitHub stars](https://img.shields.io/github/stars/yyqclhy/Astrion-integration)](https://github.com/yyqclhy/Astrion-integration/stargazers)
 
-**Official Home Assistant integration for the Sanytron Astrion Remote.**
+# Astrion Home Assistant Integration
 
-Astrion Integration connects the Astrion Remote with Home Assistant, providing a local-first interface for controlling your smart home, multimedia devices, automation workflows, hardware buttons, and infrared devices.
+**Home Assistant integration for Sanytron Astrion local infrared control and IR device capabilities.**
 
-> **Part of the Sanytron / Qinkunex ecosystem.**
+Astrion Home connects an **Astrion Remote Gateway** to Home Assistant and exposes Astrion's infrared capabilities for use with Home Assistant, including IR device entities and remote-control workflows.
 
----
-
-## 🌐 Ecosystem
-
-RosCard / Astrion Integration is developed as part of the broader Sanytron interface ecosystem.
-
-- 🌐 **Sanytron Official Website** — Product overview, news, and ecosystem hub
-- 🌐 **Sanytron Hub** — Documentation, downloads, firmware, support, and product information
-- 💬 **Sanytron Forum** — Technical discussions, feature requests, troubleshooting, and community development
-- 🧠 **Qinkunex** — Human–Object Interaction & Interface Engineering
-
-### Official Links
-
-- [Sanytron Official Website](https://www.sanytron.com/)
-- [Sanytron Hub](https://hub.sanytron.com/)
-- [Sanytron Forum](https://forum.sanytron.com/)
-- [Qinkunex Profile](https://github.com/Qinkunex)
-- [r/Sanytron](https://www.reddit.com/r/Sanytron/)
-- [Sanytron Discord](https://discord.gg/dh2sQrWTH)
+> **Important:** Astrion Home and RosCard are complementary components with different responsibilities.
+>
+> **Astrion Home** provides the Home Assistant-side integration for Astrion's IR capabilities.
+> **RosCard** provides the Home Assistant interaction layer used to build the Astrion remote interface.
 
 ---
 
-## 🧠 Architecture
+## 🧠 How Astrion Works
 
 Astrion is designed around a simple principle:
 
-> **Home Assistant = Brain**  
-> **Astrion = Interface**  
-> **Astrion Integration = Bridge**  
+> **Home Assistant = Brain**
+> **Astrion = Physical Interface**
+> **Astrion Home = IR Integration**
 > **RosCard = Interaction Layer**
 
-Home Assistant remains the central automation and state‑management platform, while Astrion provides a dedicated physical and touchscreen interface. The integration acts as the bridge, ensuring seamless communication between the two.
+Home Assistant remains the source of truth for device states, services, scenes, scripts, and automations.
 
-This architecture keeps automation logic inside Home Assistant while allowing Astrion to interact with your home locally.
+Astrion Home adds Astrion's IR capabilities to Home Assistant, while RosCard provides the remote-facing interface that selectively maps Home Assistant entities and functions onto Astrion's touchscreen and physical controls.
 
 ```text
-                    Home Assistant
-                          │
-              ┌───────────┴───────────┐
-              │                       │
-        Automations              Entity States
-              │                       │
-              └───────────┬───────────┘
-                          │
-                  Astrion Integration
-                          │
-              ┌───────────┴───────────┐
-              │                       │
-          Astrion Remote           RosCard
-              │                       │
-              └───────────┬───────────┘
-                          │
-                    User Interface
+                         HOME ASSISTANT
+                  ┌──────────────────────────┐
+                  │                          │
+                  │   Entities               │
+                  │   States                 │
+                  │   Services               │
+                  │   Automations / Scenes   │
+                  │                          │
+                  │          🧠 BRAIN         │
+                  └────────────┬─────────────┘
+                               │
+               ┌───────────────┴────────────────┐
+               │                                │
+               ▼                                ▼
+      ┌─────────────────┐              ┌─────────────────┐
+      │   Astrion Home  │              │     RosCard     │
+      │                 │              │                 │
+      │ IR Gateway      │              │ Entity Mapping  │
+      │ IR Integration  │              │ State Sync      │
+      │ IR Capabilities │              │ Remote UI       │
+      └────────┬────────┘              └────────┬────────┘
+               │                                │
+               └────────────────┬───────────────┘
+                                ▼
+                         ┌──────────────┐
+                         │   ASTRION    │
+                         │              │
+                         │ Touchscreen  │
+                         │ Buttons      │
+                         │ Local IR     │
+                         └──────────────┘
 ```
+
+### Why are there two Home Assistant components?
+
+They solve different problems:
+
+**Astrion Home**
+
+Connects the Astrion Remote Gateway to Home Assistant and provides the integration required for Astrion's IR capabilities and IR device library.
+
+**RosCard**
+
+Provides the interaction layer that turns Home Assistant entities, states and functions into a remote-oriented interface designed for Astrion's 3.1-inch touchscreen and physical buttons.
+
+This separation allows Astrion to remain a focused physical interface instead of simply becoming a small touchscreen version of a Home Assistant dashboard.
 
 ---
 
-## ✨ Features
+## 📡 What Astrion Home Provides
 
-### 🏠 Home Assistant Integration
+Astrion Home was introduced with Astrion firmware **V1.2.0**, when local infrared control was added.
 
-Connect Astrion directly to Home Assistant and access your entities, services, scenes, scripts, and automation workflows. The integration exposes Astrion as a device with sensors, events, and services.
+### Astrion Remote Gateway
 
-### 🎛️ Hardware Button Events
+The integration discovers and connects the Astrion Remote Gateway associated with your Home Assistant installation.
 
-Astrion physical buttons can be integrated into Home Assistant automations and scripts.
+The gateway is identified by the Astrion Remote's **serial number (SN)**, which can be found in the remote's **About** page.
 
-Supported use cases include:
-- Directional pad (up/down/left/right)
-- OK / navigation buttons
-- Volume controls
-- Channel controls
-- Custom hardware buttons
-- Long‑press actions
+### 📺 Infrared Device Control
 
-This allows Astrion to function as both a touchscreen interface and a programmable physical controller.
+Astrion's local IR hardware can control traditional infrared devices such as:
 
-### 📡 Local Infrared Control
+* TVs
+* AV receivers
+* Media players
+* Air conditioners
+* Other compatible IR-controlled equipment
 
-Astrion includes local infrared hardware for controlling traditional devices such as:
-- TVs
-- AV receivers
-- Air conditioners
-- Media players
-- Other IR‑controlled equipment
+Astrion Home exposes the IR capabilities to Home Assistant so they can be used by supported Astrion interfaces and Home Assistant workflows.
 
-IR commands can be used together with Home Assistant automations and Astrion interfaces.
+### 🗃️ IR Device / Code Library
 
-### 🎬 Automation & Activities
+Astrion Home provides access to Sanytron's supported IR device and code library for compatible equipment.
 
-Astrion can work with Home Assistant scripts, scenes, helpers, and automations to create activity‑style workflows.
+Available IR capabilities may vary depending on the device type and current library support.
 
-**Example: Movie Night**
+### 🎛️ Home Assistant Workflows
 
-1. Turn on the TV
-2. Turn on the AV receiver
-3. Select the correct HDMI input
-4. Start the media player
-5. Set the appropriate volume target
-6. Open the corresponding Astrion interface
+Astrion IR entities can be used with Home Assistant features such as:
 
-The automation logic remains entirely inside Home Assistant.
+* Automations
+* Scripts
+* Scenes
+* Helpers
+* Other supported Home Assistant actions
 
-### 🔄 State‑Aware Control
+For example, a Home Assistant automation can combine IR commands with smart-home devices:
 
-Astrion is designed around Home Assistant's entity states. This allows interfaces to react to the current state of devices rather than simply sending static commands, enabling dynamic and context‑sensitive interactions.
+```text
+Movie Night
+     │
+     ├── TV → Power ON
+     ├── AVR → Power ON
+     ├── AVR → Select HDMI
+     ├── Media Player → Start
+     ├── Lights → 20%
+     └── Curtains → Closed
+```
+
+The automation logic remains in Home Assistant.
+
+---
+
+## 🎨 Astrion + RosCard
+
+Astrion Home is designed to work together with **RosCard**, the interface layer created specifically for Astrion and Home Assistant.
+
+RosCard can selectively map relevant Home Assistant entities and functions into purpose-built remote interfaces.
+
+Instead of reproducing the complete Home Assistant dashboard:
+
+```text
+Hundreds of HA entities
+          │
+          ▼
+       RosCard
+          │
+    Select / Map / Filter
+          │
+          ▼
+   Focused remote UI
+          │
+          ▼
+       Astrion
+```
+
+This is especially important on a 3.1-inch touchscreen.
+
+A Home Assistant installation can contain a very large number of entities, dashboards and automations. A physical remote should expose what is useful for the current task rather than requiring the user to navigate the entire HA ecosystem.
+
+### Example: TV Card
+
+A TV Card can combine multiple control sources inside one physical interface:
+
+```text
+                     TV CARD
+                        │
+          ┌─────────────┼─────────────┐
+          │             │             │
+          ▼             ▼             ▼
+      Astrion IR    Harmony HUB   Media Player
+          │             │             │
+          └─────────────┼─────────────┘
+                        │
+                        ▼
+                     ASTRION
+                Touch + Buttons
+```
+
+This allows a user to combine local IR, existing Harmony infrastructure, and Home Assistant media entities within one remote-oriented experience.
+
+See the RosCard project:
+
+https://github.com/yyqclhy/RosCard
+
+---
+
+## 🔐 Requirements
+
+Before configuring Astrion Home, make sure:
+
+* Astrion is connected to your local network.
+* Home Assistant is running and accessible.
+* Astrion and Home Assistant can communicate on the same local network/subnet where required.
+* The Home Assistant account used for authentication has **Administrator permissions**.
+* The Long-Lived Access Token is created from that Administrator account.
+
+### ⚠️ Administrator Permissions Matter
+
+The Astrion Home configuration flow may fail to discover the Astrion Gateway if the Home Assistant account used to create the Long-Lived Access Token does not have Administrator permissions.
+
+If the gateway does not appear during setup, first verify the account permissions and, if necessary, create a **new Long-Lived Access Token using an Administrator account** before troubleshooting the network further.
 
 ---
 
 ## 📦 Installation
 
-### HACS (Recommended)
+### HACS — Recommended
 
-The recommended installation method is HACS.
+Astrion Home is available through HACS.
 
 1. Open **HACS** in Home Assistant.
-2. Search for **Astrion** (it is available as a default repository).
-3. Install the Astrion integration.
+2. Search for **Astrion**.
+3. Install **Astrion Home**.
 4. Restart Home Assistant.
-5. Add the Astrion integration from **Settings → Devices & services → Add Integration**, then search for **Astrion**.
+5. Go to **Settings → Devices & services → Add Integration**.
+6. Search for **Astrion Home**.
+
+After the integration is added, Home Assistant will search for the available Astrion Remote Gateway.
+
+Select the gateway corresponding to your Astrion Remote.
+
+The gateway is identified by the remote's **SN**.
 
 ### Manual Installation
 
-If you prefer manual installation, copy the integration folder into your `custom_components` directory and restart Home Assistant.
+If you prefer manual installation:
+
+1. Copy the integration folder into your Home Assistant `custom_components` directory.
+2. Restart Home Assistant.
+3. Open **Settings → Devices & services → Add Integration**.
+4. Search for **Astrion Home**.
 
 ---
 
 ## ⚙️ Configuration
 
-After installation, navigate to:
+After installing Astrion Home:
 
-**Settings → Devices & services → Add Integration**
+```text
+Home Assistant
+      │
+      ▼
+Settings
+      │
+      ▼
+Devices & services
+      │
+      ▼
+Add Integration
+      │
+      ▼
+Astrion Home
+      │
+      ▼
+Discover Astrion Gateway
+      │
+      ▼
+Select Remote
+```
 
-and search for **Astrion**. Follow the configuration steps shown by Home Assistant.
+The Astrion Gateway is identified by its **serial number (SN)**.
 
-For detailed configuration instructions, please see the official Astrion documentation:
+You can find the SN on Astrion under:
 
-👉 [https://hub.sanytron.com/support/astrion](https://hub.sanytron.com/support/astrion)
+**Settings → About**
+
+### If the Gateway Is Not Found
+
+Before opening an issue, check:
+
+1. Astrion is connected to the network.
+2. Astrion and Home Assistant are reachable from the same local network/subnet where required.
+3. The Home Assistant account used for the Long-Lived Access Token has **Administrator** permissions.
+4. The token was created using that Administrator account.
+5. Try creating a new Long-Lived Access Token and reconnecting Astrion.
+6. Restart Home Assistant after installing or updating the integration.
+7. Make sure Astrion is running a compatible firmware version.
+
+See the troubleshooting documentation:
+
+https://hub.sanytron.com/support/astrion/no-connection
+
+For the complete Astrion setup guide:
+
+https://hub.sanytron.com/support/astrion/getting-started
 
 ---
 
-## 🎨 RosCard
+## 📡 Local Infrared Control
 
-Astrion Integration works together with **RosCard**, the interface layer designed specifically for Astrion and Home Assistant.
+Local IR control was introduced in **Astrion V1.2.0**.
 
-RosCard provides customizable cards for:
-- Media players
-- TVs
-- Lights
-- Climate
-- Scenes
-- Scripts
-- Automation workflows
+Astrion can transmit IR commands directly through its built-in infrared hardware.
 
-Together:
+This makes it possible to control traditional AV equipment without requiring the target device itself to be connected to Home Assistant.
 
-> **Astrion Integration provides the bridge.**  
-> **RosCard provides the interface.**
+The Astrion IR entity can then be used by supported Astrion interfaces such as the TV Card.
 
-👉 [https://github.com/yyqclhy/RosCard](https://github.com/yyqclhy/RosCard)
+For detailed IR configuration:
+
+https://hub.sanytron.com/support/astrion/infrared
+
+---
+
+## 🎬 Harmony and Activity-Style Control
+
+One of the ideas that strongly influenced Astrion is the **Activity** concept introduced by Logitech Harmony.
+
+Instead of thinking about devices individually:
+
+```text
+TV
+AV Receiver
+Media Player
+Input
+Volume
+```
+
+the user can express a higher-level intention:
+
+```text
+Watch TV
+```
+
+Harmony translated that intention into the required device actions.
+
+Home Assistant allows this idea to go further.
+
+For example:
+
+```text
+                WATCH A MOVIE
+                      │
+                      ▼
+               HOME ASSISTANT
+                      │
+        ┌─────────────┼─────────────┐
+        ▼             ▼             ▼
+    Projector         AVR         Player
+        │             │             │
+        └─────────────┼─────────────┘
+                      │
+             ┌────────┼────────┐
+             ▼        ▼        ▼
+          Lights   Curtains  Climate
+                      │
+                      ▼
+                   ASTRION
+```
+
+The goal is not simply to put more device controls onto a remote.
+
+It is to provide a physical interface through which users can interact with a much larger Home Assistant system.
+
+This is an important part of the direction behind Astrion.
+
+---
+
+## 🧩 Architecture Principles
+
+Astrion and its software ecosystem follow several design principles.
+
+### Home Assistant Remains the Source of Truth
+
+Device states, services, automations and orchestration remain in Home Assistant.
+
+Astrion does not attempt to replace Home Assistant as the automation engine.
+
+### Physical Interface Instead of Dashboard Mirroring
+
+RosCard does not simply reproduce the entire Home Assistant dashboard on Astrion.
+
+Instead, it selects and presents the relevant functions in a remote-oriented interface.
+
+### Physical + Digital Control
+
+Astrion combines:
+
+* Touchscreen interaction
+* Physical buttons
+* Home Assistant entities
+* Local infrared
+* Automation workflows
+
+This allows traditional equipment and modern smart-home devices to coexist within one physical control layer.
+
+### State-Aware Interaction
+
+When supported by the interface and Home Assistant entities, Astrion can react to current device states rather than relying only on static commands.
+
+---
+
+## 🛠️ Current Astrion Software
+
+Astrion continues to evolve through firmware, RosCard and Home Assistant integration updates.
+
+For the latest supported versions and release information:
+
+https://hub.sanytron.com/support/astrion
+
+Current firmware and release notes:
+
+https://hub.sanytron.com/support/astrion/release-notes
 
 ---
 
 ## 🧪 Development
 
-This project is developed as part of the Astrion ecosystem and evolves through feedback from Astrion users and the Home Assistant community.
+Astrion Home is developed as part of the broader Astrion ecosystem and evolves through real-world use and community feedback.
 
-Bug reports, feature requests, documentation improvements, and pull requests are welcome.
+We welcome:
 
-Please open an issue before submitting large changes.
+* Bug reports
+* Feature requests
+* Documentation improvements
+* Configuration examples
+* Testing and feedback
+* Pull requests
 
-### 🐞 Bug Reports & Feature Requests
+When reporting an issue, please include:
 
-If you encounter a problem, please include:
-- Astrion firmware version
-- Astrion Integration version
-- Home Assistant version
-- Relevant logs
-- Steps to reproduce the issue
+* Astrion firmware version
+* Astrion Home integration version
+* Home Assistant version
+* Relevant logs
+* Configuration details
+* Steps to reproduce the issue
 
-You can report issues directly through [GitHub Issues](https://github.com/yyqclhy/Astrion-integration/issues).
+Open an issue here:
 
-For broader technical discussions and community support:
-
-👉 [https://forum.sanytron.com/](https://forum.sanytron.com/)
-
----
-
-## 🗺️ Roadmap
-
-Astrion is a community‑driven product. The integration and its surrounding ecosystem continue to evolve based on:
-- Community feedback
-- Feature requests
-- Bug reports
-- Real‑world usage
-- Home Assistant ecosystem changes
-
-We periodically publish Astrion Remote roadmap and development updates through the official community channels.
+https://github.com/yyqclhy/Astrion-integration/issues
 
 ---
 
-## 🌐 Community & Resources
+## 🌱 Community-Driven Development
+
+Astrion was designed for Home Assistant users who like to explore, customize and build their own solutions.
+
+We have seen community members create:
+
+* Custom launchers
+* APK modifications
+* UI experiments
+* Button mappings
+* RosCard configurations
+* Custom integrations
+* Automation workflows
+
+We do not see these experiments as something separate from the product.
+
+They are part of how the Astrion ecosystem evolves.
+
+Real-world experimentation often reveals use cases that are difficult to anticipate during initial development, and community feedback has directly influenced subsequent improvements.
+
+Astrion is therefore not only developed **for** the Home Assistant community, but also continues to be developed **with** the community.
+
+---
+
+## 🌐 Sanytron Astrion Resources
 
 ### Sanytron Hub
-Official documentation, downloads, firmware updates, and support:  
-[https://hub.sanytron.com/](https://hub.sanytron.com/)
 
-### Astrion Support
-[https://hub.sanytron.com/support/astrion](https://hub.sanytron.com/support/astrion)
+Documentation, downloads, firmware updates, support and product information:
+
+https://hub.sanytron.com/
+
+### Astrion Support Center
+
+Complete Astrion technical documentation:
+
+https://hub.sanytron.com/support/astrion
+
+### Getting Started
+
+https://hub.sanytron.com/support/astrion/getting-started
+
+### Infrared Control
+
+https://hub.sanytron.com/support/astrion/infrared
+
+### Troubleshooting
+
+https://hub.sanytron.com/support/astrion/no-connection
+
+### RosCard
+
+https://github.com/yyqclhy/RosCard
 
 ### Sanytron Forum
-Technical discussions, troubleshooting, and feature requests:  
-[https://forum.sanytron.com/](https://forum.sanytron.com/)
+
+Technical discussions, troubleshooting, feature requests and community development:
+
+https://forum.sanytron.com/
 
 ### Reddit
-[https://www.reddit.com/r/Sanytron/](https://www.reddit.com/r/Sanytron/)
+
+https://www.reddit.com/r/Sanytron/
 
 ### Discord
-[https://discord.gg/dh2sQrWTH](https://discord.gg/dh2sQrWTH)
 
-### Qinkunex
-Astrion is part of the broader Sanytron / Qinkunex ecosystem:  
-[https://github.com/Qinkunex](https://github.com/Qinkunex)
+https://discord.gg/dh2sQrWTH
 
 ---
 
 ## 🤝 Contributing
 
-We welcome contributions from the community. You can help by:
-- Reporting bugs
-- Suggesting features
-- Improving documentation
-- Sharing configurations
-- Submitting pull requests
-- Testing new releases
+Contributions and experimentation are welcome.
+
+You can help by:
+
+* Reporting bugs
+* Suggesting features
+* Improving documentation
+* Sharing configurations
+* Testing releases
+* Submitting pull requests
+
+Please open an issue before submitting large changes.
 
 Astrion is built together with its community.
 
@@ -256,21 +532,22 @@ Astrion is built together with its community.
 
 ## 📄 License
 
-Astrion Integration is released under the **MIT License**.  
+Astrion Home is released under the **MIT License**.
+
 See [LICENSE](LICENSE) for details.
 
 ---
 
 ## 🙏 Acknowledgements
 
-This integration would not exist without the work of the Home Assistant community and the users who continue to experiment with new ways of interacting with smart homes.
+Astrion Home builds on the work of the Home Assistant community and the many users who continue to experiment with new ways of interacting with smart homes.
 
-Thank you to everyone contributing feedback, testing new releases, reporting bugs, and helping shape the Astrion ecosystem.
+Thank you to everyone who tests releases, reports problems, shares configurations, contributes ideas and helps shape the Astrion ecosystem.
 
 ---
 
 <p align="center">
-  <strong>Astrion Integration</strong><br>
-  Bridge between Home Assistant and Astrion Remote<br>
-  <em>Part of the Sanytron / Qinkunex ecosystem.</em>
+  <strong>Astrion Home</strong><br>
+  Home Assistant integration for Astrion IR capabilities<br>
+  <em>Part of the Sanytron Astrion ecosystem.</em>
 </p>
