@@ -50,13 +50,13 @@ Astrion Home provides the Home Assistant-side connection for Astrion's IR capabi
                ┌───────────────┴────────────────┐
                │                                │
                ▼                                ▼
-      ┌─────────────────┐              ┌─────────────────┐
-      │   Astrion Home  │              │     RosCard     │
-      │                 │              │                 │
-      │ IR Gateway      │              │ Entity Mapping  │
-      │ IR Integration  │              │ State Sync      │
-      │ IR Capabilities │              │ Remote UI       │
-      └────────┬────────┘              └────────┬────────┘
+      ┌───────────────────────┐              ┌─────────────────┐
+      │   Astrion Home        │              │     RosCard     │
+      │ Button event report   │              │                 │
+      │ IR Gateway            │              │ Entity Mapping  │
+      │ IR Integration        │              │ State Sync      │
+      │ IR Capabilities       │              │ Remote UI       │
+      └────────┬──────────────┘              └────────┬────────┘
                │                                │
                └────────────────┬───────────────┘
                                 ▼
