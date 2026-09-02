@@ -9,7 +9,10 @@ from homeassistant.components.select import SelectEntity
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
+from homeassistant.helpers.dispatcher import async_dispatcher_connect
+from homeassistant.exceptions import HomeAssistantError
 from .const import DOMAIN
+from .gateway import coordinator, signal
 import asyncio
 import logging
 
@@ -56,6 +59,7 @@ class GatewayNavigateSelect(SelectEntity):
 
     def __init__(self, hass: HomeAssistant, serial: str, pages: list[str] | None):
         self._serial = serial
+        self._gateway = coordinator(hass)
         self._attr_unique_id = f"{serial}_navigate"
         # 中英文名称通过 translations/select 翻译文件配置
         self._attr_translation_key = "navigate"
@@ -77,9 +81,15 @@ class GatewayNavigateSelect(SelectEntity):
     def current_option(self) -> str | None:
         return self._current_page
 
+    @property
+    def available(self) -> bool:
+        return self._gateway.has_capability(self._serial, "navigation_control")
+
     # ---- 用户手动选 / 自动化执行 → 通知 APK + 自动复位 ----
 
     async def async_select_option(self, option: str) -> None:
+        if not self.available:
+            raise HomeAssistantError("Gateway is offline or navigation is unsupported")
         if option == SENTINEL:
             return
         if self._syncing:
@@ -150,6 +160,10 @@ class GatewayNavigateSelect(SelectEntity):
     # ---- 监听 navigate_list_updated (共享 same options) ----
 
     async def async_added_to_hass(self):
+        await super().async_added_to_hass()
+        self.async_on_remove(
+            async_dispatcher_connect(self.hass, signal(self._serial), self.async_write_ha_state)
+        )
         self.async_on_remove(
             self.hass.bus.async_listen(
                 f"{DOMAIN}/navigate_list_updated",
@@ -183,6 +197,7 @@ class GatewaySceneSelect(SelectEntity):
     def __init__(self, hass: HomeAssistant, serial: str,
                  pages: list[str] | None, current: str | None):
         self._serial = serial
+        self._gateway = coordinator(hass)
         self._attr_unique_id = f"{serial}_scene"
         # 中英文名称通过 translations/select 翻译文件配置
         self._attr_translation_key = "scene"
@@ -203,9 +218,15 @@ class GatewaySceneSelect(SelectEntity):
     def current_option(self) -> str | None:
         return self._current
 
+    @property
+    def available(self) -> bool:
+        return self._gateway.has_capability(self._serial, "navigation_control")
+
     # ---- 用户手动选 → 通知 APK ----
 
     async def async_select_option(self, option: str) -> None:
+        if not self.available:
+            raise HomeAssistantError("Gateway is offline or navigation is unsupported")
         self._current = option
         self._state_sync_flag = True
         self.async_write_ha_state()
@@ -234,6 +255,10 @@ class GatewaySceneSelect(SelectEntity):
     # ---- 监听 navigate_list_updated (与 A-Select 共享) ----
 
     async def async_added_to_hass(self):
+        await super().async_added_to_hass()
+        self.async_on_remove(
+            async_dispatcher_connect(self.hass, signal(self._serial), self.async_write_ha_state)
+        )
         self.async_on_remove(
             self.hass.bus.async_listen(
                 f"{DOMAIN}/navigate_list_updated",

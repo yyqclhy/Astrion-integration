@@ -17,6 +17,14 @@ from .const import (
     BROADLINK_STORAGE_SUFFIX,
 )
 
+from .gateway import (
+    coordinator,
+    websocket_bluetooth_inventory,
+    websocket_gateway_ack,
+    websocket_gateway_get_pending,
+    websocket_gateway_heartbeat,
+)
+
 _LOGGER = logging.getLogger(__name__)
 
 STORAGE_VERSION = 1
@@ -96,6 +104,10 @@ async def async_setup(hass: HomeAssistant, config: dict) -> bool:
     websocket_api.async_register_command(hass, websocket_get_device_codes)
     websocket_api.async_register_command(hass, websocket_get_harmony_config)
     websocket_api.async_register_command(hass, websocket_get_broadlink_codes)
+    websocket_api.async_register_command(hass, websocket_gateway_heartbeat)
+    websocket_api.async_register_command(hass, websocket_gateway_get_pending)
+    websocket_api.async_register_command(hass, websocket_gateway_ack)
+    websocket_api.async_register_command(hass, websocket_bluetooth_inventory)
     _LOGGER.info("[Startup] WebSocket handlers registered successfully!")
 
     # 监听 APK 通过 fire_event 上报的导航列表
@@ -160,19 +172,41 @@ async def async_setup(hass: HomeAssistant, config: dict) -> bool:
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """初始化配置条目"""
-    store = storage.Store(hass, STORAGE_VERSION, STORAGE_KEY)
-    hass.data.setdefault(DOMAIN, {})
-    hass.data[DOMAIN]["store"] = store
-    hass.data[DOMAIN]["library"] = await store.async_load() or {"devices": {}}
+    shared = hass.data.setdefault(DOMAIN, {})
+    # 所有网关共用此数据仓库，不能在每次初始化配置条目时重新加载或替换它。
+    lock = shared.setdefault("library_init_lock", asyncio.Lock())
+    async with lock:
+        if "store" not in shared:
+            store = storage.Store(hass, STORAGE_VERSION, STORAGE_KEY)
+            library = await store.async_load() or {"devices": {}}
+            library.setdefault("bluetooth_devices", {})
+            protocol = library.setdefault("gateway_runtime_protocol", {})
+            protocol.setdefault("commands", {})
+            protocol.setdefault("sequences", {})
+            protocol.setdefault("inventory_revisions", {})
+            shared["library"] = library
+            shared["store"] = store
+    serial = entry.data.get("app_serial")
+    if serial:
+        coordinator(hass).start(serial)
 
     # 冗余注册 WebSocket 处理器（如果 async_setup 已注册，这是无操作）
     websocket_api.async_register_command(hass, websocket_submit_pair_data)
     websocket_api.async_register_command(hass, websocket_get_device_codes)
     websocket_api.async_register_command(hass, websocket_get_harmony_config)
     websocket_api.async_register_command(hass, websocket_get_broadlink_codes)
+    websocket_api.async_register_command(hass, websocket_gateway_heartbeat)
+    websocket_api.async_register_command(hass, websocket_gateway_get_pending)
+    websocket_api.async_register_command(hass, websocket_gateway_ack)
+    websocket_api.async_register_command(hass, websocket_bluetooth_inventory)
 
     # 加载遥控器实体平台 + 网关场景选择器
-    await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
+    try:
+        await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
+    except Exception:
+        if serial:
+            coordinator(hass).stop(serial)
+        raise
     
     # 注册红外服务
     hass.services.async_register(DOMAIN, "discover_all", handle_discover_all)
@@ -188,10 +222,18 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 # ====================== 2. 卸载与设备删除 ======================
 async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     unload_ok = await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
+    serial = entry.data.get("app_serial")
+    if unload_ok and serial:
+        coordinator(hass).stop(serial)
     if unload_ok and len(hass.config_entries.async_entries(DOMAIN)) == 1:
         hass.services.async_remove(DOMAIN, "discover_all")
         hass.services.async_remove(DOMAIN, "send_command")
     return unload_ok
+
+async def async_remove_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
+    serial = entry.data.get("app_serial")
+    if serial:
+        await coordinator(hass).remove_gateway(serial)
 
 async def async_remove_config_entry_device(
     hass: HomeAssistant, config_entry: ConfigEntry, device_entry: DeviceEntry
@@ -252,6 +294,10 @@ def handle_send_command(call: ServiceCall) -> None:
     if domain != "remote":
         _LOGGER.debug("Not an IR entity: %s", entity_id)
         return
+
+    if state.attributes.get("control_protocol") == "bluetooth_hid":
+        from homeassistant.exceptions import HomeAssistantError
+        raise HomeAssistantError("Bluetooth HID entities cannot receive infrared commands")
 
     # 从实体属性获取父级网关串号
     parent_serial = state.attributes.get("parent_app_serial")

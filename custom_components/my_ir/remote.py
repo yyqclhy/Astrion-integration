@@ -3,6 +3,7 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from .const import DOMAIN
+from .bluetooth_remote import setup_bluetooth_remotes
 
 async def async_setup_entry(
     hass: HomeAssistant, entry: ConfigEntry, async_add_entities: AddEntitiesCallback
@@ -15,6 +16,7 @@ async def async_setup_entry(
         if device_data.get("parent_app_serial") == parent_serial:
             entities.append(MyIRRemote(hass, serial, device_data))
     async_add_entities(entities, True)  # 更新已有实体
+    setup_bluetooth_remotes(hass, entry, async_add_entities)
 
 
 class MyIRRemote(RemoteEntity):
