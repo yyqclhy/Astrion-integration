@@ -14,7 +14,30 @@ PROTOCOL_VERSION = 1
 SCHEMA_VERSION = 1
 PROTOCOL = "bluetooth_hid"
 HID_PROFILE = "keyboard_v1"
-HID_KEYS = ("hid_keyboard_up", "hid_keyboard_down", "hid_keyboard_left", "hid_keyboard_right")
+# TV 蓝牙 HID 下拉框的稳定命令目录，顺序与卡片编辑器和 Android 端一致。
+# 这些值只描述可配置的键，不代表 Home Assistant 会直接发送蓝牙报告。
+HID_KEYS = (
+    # 导航键。
+    "hid_keyboard_up", "hid_keyboard_down", "hid_keyboard_left", "hid_keyboard_right",
+    # 确认/选择键。
+    "hid_keyboard_enter",
+    # 系统功能键。
+    "hid_keyboard_home", "hid_keyboard_back", "hid_keyboard_menu", "hid_keyboard_power",
+    # 数字键，按 TV 配置界面要求使用 0-9 顺序。
+    "hid_keyboard_0", "hid_keyboard_1", "hid_keyboard_2", "hid_keyboard_3", "hid_keyboard_4",
+    "hid_keyboard_5", "hid_keyboard_6", "hid_keyboard_7", "hid_keyboard_8", "hid_keyboard_9",
+    # 文本输入。
+    "hid_keyboard_a", "hid_keyboard_b", "hid_keyboard_c", "hid_keyboard_d", "hid_keyboard_e",
+    "hid_keyboard_f", "hid_keyboard_g", "hid_keyboard_h", "hid_keyboard_i", "hid_keyboard_j",
+    "hid_keyboard_k", "hid_keyboard_l", "hid_keyboard_m", "hid_keyboard_n", "hid_keyboard_o",
+    "hid_keyboard_p", "hid_keyboard_q", "hid_keyboard_r", "hid_keyboard_s", "hid_keyboard_t",
+    "hid_keyboard_u", "hid_keyboard_v", "hid_keyboard_w", "hid_keyboard_x", "hid_keyboard_y",
+    "hid_keyboard_z",
+    # 功能键。
+    "hid_keyboard_f1", "hid_keyboard_f2", "hid_keyboard_f3", "hid_keyboard_f4",
+    "hid_keyboard_f5", "hid_keyboard_f6", "hid_keyboard_f7", "hid_keyboard_f8",
+    "hid_keyboard_f9", "hid_keyboard_f10", "hid_keyboard_f11", "hid_keyboard_f12",
+)
 ADAPTER_STATES = {"on", "off", "turning_on", "turning_off", "unsupported", "unknown"}
 PERMISSION_STATES = {"granted", "denied", "unknown"}
 CONNECTION_STATES = {"disconnected", "connecting", "connected", "disconnecting", "unknown"}
