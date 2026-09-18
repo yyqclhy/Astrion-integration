@@ -4,6 +4,8 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from .const import DOMAIN
 from .bluetooth_remote import setup_bluetooth_remotes
+from .gateway import coordinator
+from .ir_learning_remote import IrLearningRemote
 
 async def async_setup_entry(
     hass: HomeAssistant, entry: ConfigEntry, async_add_entities: AddEntitiesCallback
@@ -17,6 +19,16 @@ async def async_setup_entry(
             entities.append(MyIRRemote(hass, serial, device_data))
     async_add_entities(entities, True)  # 更新已有实体
     setup_bluetooth_remotes(hass, entry, async_add_entities)
+    if parent_serial:
+        manager = coordinator(hass)
+        manager.register_ir_learning_entity_adder(
+            parent_serial,
+            async_add_entities,
+            lambda: IrLearningRemote(hass, parent_serial),
+        )
+        entry.async_on_unload(
+            lambda: manager.unregister_ir_learning_entity_adder(parent_serial, async_add_entities)
+        )
 
 
 class MyIRRemote(RemoteEntity):

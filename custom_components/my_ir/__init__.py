@@ -29,6 +29,7 @@ _LOGGER = logging.getLogger(__name__)
 
 STORAGE_VERSION = 1
 STORAGE_KEY = f"{DOMAIN}.library"
+IR_CODE_STORAGE_KEY = f"{DOMAIN}_ir_codes"
 PLATFORMS = ["remote", "select", "button"]
 MAX_BROADLINK_DEVICES = 100
 MAX_BROADLINK_KEYS_PER_DEVICE = 200
@@ -104,6 +105,7 @@ async def async_setup(hass: HomeAssistant, config: dict) -> bool:
     websocket_api.async_register_command(hass, websocket_get_device_codes)
     websocket_api.async_register_command(hass, websocket_get_harmony_config)
     websocket_api.async_register_command(hass, websocket_get_broadlink_codes)
+    websocket_api.async_register_command(hass, websocket_get_learned_ir_codes)
     websocket_api.async_register_command(hass, websocket_gateway_heartbeat)
     websocket_api.async_register_command(hass, websocket_gateway_get_pending)
     websocket_api.async_register_command(hass, websocket_gateway_ack)
@@ -186,6 +188,32 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             protocol.setdefault("inventory_revisions", {})
             shared["library"] = library
             shared["store"] = store
+        if "ir_code_store" not in shared:
+            ir_store = storage.Store(hass, STORAGE_VERSION, IR_CODE_STORAGE_KEY)
+            ir_codes = await ir_store.async_load()
+            if ir_codes is None:
+                ir_codes = {}
+            if not isinstance(ir_codes, dict):
+                raise ValueError("Invalid learned IR storage")
+            # 将早期按网关保存的学习码合并到公共码库，同名项保留先加载的数据。
+            legacy = shared["library"].get("learned_ir_codes", {})
+            changed = False
+            for gateway_codes in legacy.values():
+                for device, keys in gateway_codes.items():
+                    target = ir_codes.setdefault(device, {})
+                    for key, record in keys.items():
+                        if key not in target:
+                            target[key] = record
+                            changed = True
+            from .ir_learning_data import validate_ir_library
+            validate_ir_library(ir_codes)
+            if changed:
+                await ir_store.async_save(ir_codes)
+            shared["ir_codes"] = ir_codes
+            shared["ir_code_store"] = ir_store
+            if legacy:
+                shared["library"].pop("learned_ir_codes", None)
+                await shared["store"].async_save(shared["library"])
     serial = entry.data.get("app_serial")
     if serial:
         coordinator(hass).start(serial)
@@ -195,6 +223,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     websocket_api.async_register_command(hass, websocket_get_device_codes)
     websocket_api.async_register_command(hass, websocket_get_harmony_config)
     websocket_api.async_register_command(hass, websocket_get_broadlink_codes)
+    websocket_api.async_register_command(hass, websocket_get_learned_ir_codes)
     websocket_api.async_register_command(hass, websocket_gateway_heartbeat)
     websocket_api.async_register_command(hass, websocket_gateway_get_pending)
     websocket_api.async_register_command(hass, websocket_gateway_ack)
@@ -570,3 +599,32 @@ async def websocket_get_broadlink_codes(hass: HomeAssistant, connection, msg):
             "devices": devices,
         })
 
+
+
+@websocket_api.websocket_command({
+    vol.Required("type"): f"{DOMAIN}/get_learned_ir_codes",
+    vol.Required("entity_id"): cv.entity_id,
+})
+@websocket_api.async_response
+async def websocket_get_learned_ir_codes(hass, connection, msg):
+    """返回指定学习实体所属的设备和按键实际码快照。"""
+    from homeassistant.helpers import entity_registry as er
+    entity_id = msg["entity_id"]
+    entity = er.async_get(hass).async_get(entity_id)
+    entry = hass.config_entries.async_get_entry(entity.config_entry_id) if entity else None
+    serial = entry.data.get("app_serial") if entry else None
+    if (not entity or not serial or not entity_id.startswith("remote.")
+            or entity.platform != DOMAIN or entry.domain != DOMAIN
+            or entity.unique_id != f"{serial}_ir_learning"
+            or serial not in coordinator(hass).active):
+        connection.send_error(msg["id"], "invalid_entity", "Select an Astrion IR learning remote")
+        return
+    manager = coordinator(hass)
+    async with manager.lock:
+        devices = {
+            device: {key: record["code"] for key, record in keys.items()}
+            for device, keys in manager.ir_codes(serial).items()
+        }
+    connection.send_result(msg["id"], {
+        "entity_id": entity_id, "devices": devices, "format": "raw",
+    })

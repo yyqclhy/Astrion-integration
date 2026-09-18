@@ -1,9 +1,10 @@
 """使用轻量 HA 测试替身验证网关协议 v1 状态机。"""
 import copy
+import asyncio
 import unittest
 import uuid
 
-from support import DATA, GATEWAY, Hass
+from support import DATA, GATEWAY, LEARNING, Hass
 
 
 def envelope(route, boot_id, sequence, payload, serial="gateway-a", request_id=1):
@@ -91,6 +92,27 @@ class GatewayProtocolTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result["reconciled"]["removed"], 1)
         self.assertEqual(self.manager.inventory("gateway-a"), {})
 
+    async def test_learning_remote_is_created_only_after_apk_capability_confirmation(self):
+        added = []
+        self.manager.register_ir_learning_entity_adder(
+            "gateway-a",
+            lambda entities, *args: added.extend(entities),
+            lambda: LEARNING.IrLearningRemote(self.hass, "gateway-a"),
+        )
+
+        await self.manager.heartbeat(DATA.validate_heartbeat(heartbeat(self.boot)))
+        self.assertEqual(added, [])
+
+        capable = heartbeat(self.boot, sequence=1)
+        capable["payload"]["capabilities"].append("ir_learning_uart")
+        await self.manager.heartbeat(DATA.validate_heartbeat(capable))
+        self.assertEqual(len(added), 1)
+        self.assertEqual(added[0]._attr_unique_id, "gateway-a_ir_learning")
+
+        capable["sequence"] = 2
+        await self.manager.heartbeat(DATA.validate_heartbeat(capable))
+        self.assertEqual(len(added), 1)
+
     async def test_unpair_requires_success_ack_before_delete(self):
         await self.online_with_inventory()
         command_id = await self.manager.create_unpair("gateway-a", "bt_aabbccddeeff")
@@ -151,6 +173,146 @@ class GatewayProtocolTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.manager.inventory("gateway-a"), {})
         protocol = self.hass.data["astrion"]["library"]["gateway_runtime_protocol"]
         self.assertNotIn("astrion/bluetooth/inventory", protocol["sequences"].get("gateway-a", {}))
+
+    async def start_learning(self, device="TV", key="power"):
+        message = heartbeat(self.boot)
+        message["payload"]["capabilities"].append("ir_learning_uart")
+        if not self.manager.online("gateway-a"):
+            await self.manager.heartbeat(DATA.validate_heartbeat(message))
+        entity = LEARNING.IrLearningRemote(self.hass, "gateway-a")
+        task = asyncio.create_task(entity.async_learn_command(device=device, command=[key]))
+        await asyncio.sleep(0)
+        commands = self.hass.data["astrion"]["library"]["gateway_runtime_protocol"]["commands"]
+        command_id = next(key for key, item in commands.items() if item["state"] == "pending")
+        return task, command_id
+
+    def learning_ack(self, command_id, sequence=0):
+        message = envelope("astrion/gateway/ack_command", self.boot, sequence, {
+            "command_id": command_id, "command_type": "ir.learn", "command_version": 1,
+            "status": "succeeded", "result": {
+                "format": "raw", "code": "38000,9000,4500,560",
+                "raw_data_hex": "838401c28038ffffffff",
+            },
+        })
+        message["schema_version"] = 2
+        return DATA.validate_ack(message)
+
+    async def test_learning_save_duplicate_delete_and_reload(self):
+        task, command_id = await self.start_learning()
+        self.assertEqual(self.hass.bus.events[-1][1]["gateway_serial"], "gateway-a")
+        self.assertFalse(task.done())
+        request = envelope("astrion/gateway/get_pending_commands", self.boot, 0, {})
+        self.assertEqual((await self.manager.get_pending(DATA.validate_get_pending(request)))["commands"], [])
+        request.update(schema_version=2, sequence=1)
+        pending = await self.manager.get_pending(DATA.validate_get_pending(request))
+        self.assertEqual(pending["commands"][0]["command_id"], command_id)
+        await self.manager.ack(self.learning_ack(command_id))
+        await task
+        stored = copy.deepcopy(self.manager.ir_codes("gateway-a"))
+        self.assertEqual(stored["TV"]["power"]["code"], "38000,9000,4500,560")
+        self.assertNotIn("simulated", stored["TV"]["power"])
+        # 新协调器读取公共红外Store，模拟HA重启后的码库恢复。
+        restarted = Hass()
+        restarted.data["astrion"]["library"] = copy.deepcopy(self.hass.data["astrion"]["store"].saved[-1])
+        restarted.data["astrion"]["ir_codes"] = copy.deepcopy(
+            self.hass.data["astrion"]["ir_code_store"].saved[-1]
+        )
+        self.assertEqual(GATEWAY.coordinator(restarted).ir_codes("gateway-a"), stored)
+        duplicate = await self.manager.ack(self.learning_ack(command_id, 1))
+        self.assertTrue(duplicate["duplicate"])
+        entity = LEARNING.IrLearningRemote(self.hass, "gateway-a")
+        self.manager.runtime.clear()
+        count = len(self.hass.bus.events)
+        await entity.async_learn_command(device="TV", command="power")
+        self.assertEqual(len(self.hass.bus.events), count)
+        self.assertEqual(self.manager.ir_codes("gateway-a"), stored)
+        self.assertTrue(entity.available)  # Saved-code deletion works offline.
+        await entity.async_delete_command(device="TV", command=["power"])
+        self.assertEqual(self.manager.ir_codes("gateway-a"), {})
+        self.assertEqual(len(self.hass.bus.events), count)
+        # A retried success ACK cannot resurrect a deleted command.
+        await self.manager.heartbeat(DATA.validate_heartbeat(heartbeat(self.boot, 1)))
+        await self.manager.ack(self.learning_ack(command_id, 2))
+        self.assertEqual(self.manager.ir_codes("gateway-a"), {})
+
+    async def test_learning_storage_failure_is_retryable_without_success_or_data_loss(self):
+        task, command_id = await self.start_learning()
+        store = self.hass.data["astrion"]["ir_code_store"]
+        store.fail = True
+        with self.assertRaises(OSError):
+            await self.manager.ack(self.learning_ack(command_id))
+        self.assertFalse(task.done())
+        self.assertEqual(self.manager.ir_codes("gateway-a"), {})
+        self.assertTrue(self.manager.command_active("gateway-a", "ir_learning"))
+        store.fail = False
+        await self.manager.ack(self.learning_ack(command_id))
+        await task
+        store.fail = True
+        with self.assertRaisesRegex(RuntimeError, "Unable to delete"):
+            await self.manager.delete_ir("gateway-a", "TV", ["power"])
+        self.assertIn("power", self.manager.ir_codes("gateway-a")["TV"])
+
+    async def test_delete_pending_learning_rejects_late_reply_and_keeps_other_gateway(self):
+        task, command_id = await self.start_learning()
+        self.hass.data["astrion"]["ir_codes"]["Amp"] = {
+            "mute": {"code": "38000,560,560,560"}
+        }
+        await LEARNING.IrLearningRemote(self.hass, "gateway-a").async_delete_command(device="TV", command="power")
+        with self.assertRaisesRegex(RuntimeError, "canceled"):
+            await task
+        with self.assertRaisesRegex(ValueError, "command_conflict"):
+            await self.manager.ack(self.learning_ack(command_id))
+        self.assertNotIn("TV", self.manager.ir_codes("gateway-a"))
+        self.assertEqual(self.manager.ir_codes("gateway-b")["Amp"]["mute"]["code"], "38000,560,560,560")
+
+    async def test_learning_rejects_busy_wrong_gateway_and_stale_session(self):
+        task, command_id = await self.start_learning()
+        with self.assertRaisesRegex(RuntimeError, "already learning"):
+            await self.manager.learn_ir("gateway-a", "TV", "up")
+        self.manager.start("gateway-b")
+        other_boot = str(uuid.uuid4())
+        await self.manager.heartbeat(DATA.validate_heartbeat(heartbeat(other_boot, serial="gateway-b")))
+        wrong = self.learning_ack(command_id)
+        wrong.update(gateway_serial="gateway-b", boot_id=other_boot)
+        with self.assertRaisesRegex(ValueError, "command_conflict"):
+            await self.manager.ack(wrong)
+        stale = self.learning_ack(command_id)
+        stale["boot_id"] = str(uuid.uuid4())
+        with self.assertRaisesRegex(ValueError, "stale_session"):
+            await self.manager.ack(stale)
+        await self.manager.delete_ir("gateway-a", "TV", ["power"])
+        with self.assertRaises(RuntimeError):
+            await task
+
+    async def test_learning_expiry_cancel_and_gateway_removal(self):
+        task, command_id = await self.start_learning()
+        command = self.hass.data["astrion"]["library"]["gateway_runtime_protocol"]["commands"][command_id]
+        command["expires_at"] = "2000-01-01T00:00:00Z"
+        with self.assertRaisesRegex(ValueError, "command_conflict"):
+            await self.manager.ack(self.learning_ack(command_id))
+        task.cancel()
+        with self.assertRaises(asyncio.CancelledError):
+            await task
+        self.assertEqual(self.manager.ir_codes("gateway-a"), {})
+        next_task, next_id = await self.start_learning(key="up")
+        await self.manager.remove_gateway("gateway-a")
+        with self.assertRaises(RuntimeError):
+            await next_task
+        self.assertEqual(self.manager.ir_codes("gateway-a"), {})
+
+    async def test_remote_actions_validate_before_dispatch(self):
+        entity = LEARNING.IrLearningRemote(self.hass, "gateway-a")
+        for kwargs in [
+            {}, {"device": "TV", "command": ""}, {"device": "TV", "command": ["power", ""]},
+            {"device": "TV", "command": "power", "command_type": "rf"},
+            {"device": "TV", "command": "power", "alternative": True},
+            {"device": "TV", "command": "power", "timeout": 0},
+        ]:
+            with self.assertRaises(RuntimeError):
+                await entity.async_learn_command(**kwargs)
+        with self.assertRaisesRegex(RuntimeError, "offline"):
+            await entity.async_learn_command(device="TV", command="power")
+        self.assertEqual(self.hass.bus.events, [])
 
 
 if __name__ == "__main__":

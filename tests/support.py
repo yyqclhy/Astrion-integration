@@ -4,6 +4,7 @@ import copy
 import importlib
 import sys
 import types
+from enum import IntFlag
 from pathlib import Path
 from unittest.mock import patch
 
@@ -16,6 +17,7 @@ def load_modules():
         "homeassistant", "homeassistant.components", "homeassistant.components.websocket_api",
         "homeassistant.core", "homeassistant.exceptions", "homeassistant.helpers",
         "homeassistant.helpers.dispatcher", "homeassistant.helpers.event", "voluptuous",
+        "homeassistant.components.remote",
     )
     for name in names:
         modules[name] = types.ModuleType(name)
@@ -27,6 +29,13 @@ def load_modules():
     websocket.async_response = lambda function: function
     modules["homeassistant.core"].callback = lambda function: function
     modules["homeassistant.exceptions"].HomeAssistantError = RuntimeError
+    modules["homeassistant.components.remote"].RemoteEntity = type("RemoteEntity", (), {})
+    modules["homeassistant.components.remote"].RemoteEntityFeature = IntFlag(
+        "RemoteEntityFeature", {"LEARN_COMMAND": 1, "DELETE_COMMAND": 2}
+    )
+    modules["homeassistant.helpers.dispatcher"].async_dispatcher_connect = (
+        lambda hass, name, listener: hass.signals.setdefault(name, []).append(listener)
+    )
     modules["voluptuous"].Required = lambda key: key
     modules["homeassistant.helpers.dispatcher"].async_dispatcher_send = (
         lambda hass, name: [listener() for listener in tuple(hass.signals.get(name, []))]
@@ -37,10 +46,11 @@ def load_modules():
     with patch.dict(sys.modules, modules):
         data = importlib.import_module("_astrion_gateway_tests.bluetooth_data")
         gateway = importlib.import_module("_astrion_gateway_tests.gateway")
-    return data, gateway
+        learning = importlib.import_module("_astrion_gateway_tests.ir_learning_remote")
+    return data, gateway, learning
 
 
-DATA, GATEWAY = load_modules()
+DATA, GATEWAY, LEARNING = load_modules()
 
 
 class Store:
@@ -68,6 +78,8 @@ class Hass:
             "astrion": {
                 "library": {"devices": {"ir": {"name": "keep"}}, "bluetooth_devices": {}},
                 "store": Store(),
+                "ir_codes": {},
+                "ir_code_store": Store(),
             }
         }
         self.signals = {}

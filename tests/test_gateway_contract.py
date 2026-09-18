@@ -70,6 +70,34 @@ class GatewayContractTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "invalid_payload"):
             DATA.validate_ack(invalid)
 
+    def test_learning_ack_requires_v2_and_consistent_uart_pulses(self):
+        valid = {
+            "id": 1, "type": "astrion/gateway/ack_command", "protocol_version": 1,
+            "schema_version": 2, "gateway_serial": "gateway-a", "boot_id": self.boot, "sequence": 0,
+            "payload": {
+                "command_id": str(uuid.uuid4()), "command_type": "ir.learn", "command_version": 1,
+                "status": "succeeded", "result": {
+                    "format": "raw", "code": "38000,9000,4500,560",
+                    "raw_data_hex": "838401c28038ffffffff",
+                },
+            },
+        }
+        DATA.validate_ack(valid)
+        legacy = copy.deepcopy(valid)
+        legacy["schema_version"] = 1
+        with self.assertRaises(ValueError):
+            DATA.validate_ack(legacy)
+        for replacement in [
+            {"simulated": False}, {"format": "broadlink"}, {"code": "38000,-1,4500,560"},
+            {"code": "38000,9001,4500,560"}, {"code": "38000,9000,4500"},
+            {"raw_data_hex": "038401c28038ffffffff"},
+            {"raw_data_hex": "838401c28038ffffff"}, {"extra": 1},
+        ]:
+            invalid = copy.deepcopy(valid)
+            invalid["payload"]["result"].update(replacement)
+            with self.subTest(replacement=replacement), self.assertRaises(ValueError):
+                DATA.validate_ack(invalid)
+
 
 if __name__ == "__main__":
     unittest.main()

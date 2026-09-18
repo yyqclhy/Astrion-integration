@@ -10,6 +10,8 @@ import json
 import re
 from uuid import UUID
 
+from .ir_learning_data import validate_learning_result
+
 PROTOCOL_VERSION = 1
 SCHEMA_VERSION = 1
 PROTOCOL = "bluetooth_hid"
@@ -46,7 +48,7 @@ HID_SUPPORT = {"unknown", "supported", "unsupported"}
 COMMAND_STATUSES = {"succeeded", "failed", "rejected"}
 COMMAND_ERROR_CODES = {
     "unsupported_command", "invalid_target", "bluetooth_unavailable", "permission_denied",
-    "unpair_rejected", "unpair_timeout", "command_expired", "internal_error",
+    "unpair_rejected", "unpair_timeout", "command_expired", "ir_learning_failed", "internal_error",
 }
 MAX_SEQUENCE = 9_007_199_254_740_991
 MAX_DEVICES = 100
@@ -76,7 +78,7 @@ def _uuid(value):
         return False
 
 
-def validate_envelope(data, expected_type):
+def validate_envelope(data, expected_type, schema_versions=(SCHEMA_VERSION,)):
     """校验并复制公共请求信封。"""
     required = {
         "id", "type", "protocol_version", "schema_version", "gateway_serial",
@@ -90,7 +92,7 @@ def validate_envelope(data, expected_type):
         raise ValueError("invalid_payload")
     if not _plain_int(data.get("protocol_version")) or data["protocol_version"] != PROTOCOL_VERSION:
         raise ValueError("unsupported_protocol")
-    if not _plain_int(data.get("schema_version")) or data["schema_version"] != SCHEMA_VERSION:
+    if not _plain_int(data.get("schema_version")) or data["schema_version"] not in schema_versions:
         raise ValueError("unsupported_schema")
     serial = data.get("gateway_serial")
     if not _string(serial) or serial != serial.strip():
@@ -194,7 +196,7 @@ def validate_inventory(data):
 
 
 def validate_get_pending(data):
-    data = validate_envelope(data, "astrion/gateway/get_pending_commands")
+    data = validate_envelope(data, "astrion/gateway/get_pending_commands", (1, 2))
     if set(data["payload"]) - {"limit"}:
         raise ValueError("invalid_payload")
     limit = data["payload"].get("limit", 20)
@@ -205,12 +207,15 @@ def validate_get_pending(data):
 
 
 def validate_ack(data):
-    data = validate_envelope(data, "astrion/gateway/ack_command")
+    data = validate_envelope(data, "astrion/gateway/ack_command", (1, 2))
     payload = data["payload"]
     required = {"command_id", "command_type", "command_version", "status"}
     if not required <= set(payload) or set(payload) - required - {"result", "error"}:
         raise ValueError("invalid_payload")
-    if not _uuid(payload.get("command_id")) or payload.get("command_type") != "bluetooth.unpair":
+    is_learning = payload.get("command_type") == "ir.learn"
+    if (not _uuid(payload.get("command_id"))
+            or payload.get("command_type") not in {"bluetooth.unpair", "ir.learn"}
+            or (is_learning and data["schema_version"] != 2)):
         raise ValueError("invalid_payload")
     if not _plain_int(payload.get("command_version")) or payload["command_version"] != 1:
         raise ValueError("invalid_payload")
@@ -221,7 +226,9 @@ def validate_ack(data):
         if set(payload) != required | {"result"}:
             raise ValueError("invalid_payload")
         result = payload["result"]
-        if (not isinstance(result, dict) or set(result) != {"bond_state", "outcome"}
+        if is_learning:
+            validate_learning_result(result)
+        elif (not isinstance(result, dict) or set(result) != {"bond_state", "outcome"}
                 or result.get("bond_state") != "none"
                 or result.get("outcome") not in {"unpaired", "already_unpaired"}):
             raise ValueError("invalid_payload")

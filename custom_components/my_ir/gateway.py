@@ -25,6 +25,7 @@ from .bluetooth_data import (
     validate_inventory,
 )
 from .const import DOMAIN
+from .ir_learning_data import MAX_DEVICES, MAX_KEYS, validate_learning_result, validate_names
 
 HEARTBEAT_INTERVAL = 60
 ONLINE_TIMEOUT = 180
@@ -169,6 +170,10 @@ class GatewayCoordinator:
         self.runtime = {}
         self.lock = asyncio.Lock()
         self._unsub = None
+        self._ir_waiters = {}
+        # 记录每个配置条目的实体添加回调。学习实体只有收到APK能力确认后才创建。
+        self._ir_learning_entity_adders = {}
+        self._ir_learning_entities = set()
 
     def start(self, serial):
         if not serial:
@@ -182,6 +187,11 @@ class GatewayCoordinator:
     def stop(self, serial):
         self.active.discard(serial)
         self.runtime.pop(serial, None)
+        self._ir_learning_entity_adders.pop(serial, None)
+        self._ir_learning_entities.discard(serial)
+        for command_id, (gateway_serial, event) in tuple(self._ir_waiters.items()):
+            if gateway_serial == serial:
+                event.set()
         self._notify(serial)
         if not self.active and self._unsub is not None:
             self._unsub()
@@ -215,6 +225,31 @@ class GatewayCoordinator:
 
     def has_capability(self, serial, capability):
         return capability in self.live(serial).get("capabilities", set())
+
+    def register_ir_learning_entity_adder(self, serial, async_add_entities, entity_factory):
+        """注册学习实体添加回调；只有APK声明UART能力时才立即创建。"""
+        if not serial:
+            return
+        self._ir_learning_entity_adders[serial] = (async_add_entities, entity_factory)
+        self._add_ir_learning_entity_if_supported(serial)
+
+    def unregister_ir_learning_entity_adder(self, serial, async_add_entities=None):
+        """注销配置条目的学习实体添加回调，避免卸载后继续添加实体。"""
+        registered = self._ir_learning_entity_adders.get(serial)
+        if async_add_entities is None or (registered and registered[0] is async_add_entities):
+            self._ir_learning_entity_adders.pop(serial, None)
+            self._ir_learning_entities.discard(serial)
+
+    def _add_ir_learning_entity_if_supported(self, serial):
+        """根据最近心跳能力按需创建一个学习实体，并防止重复添加。"""
+        if serial in self._ir_learning_entities or not self.has_capability(serial, "ir_learning_uart"):
+            return
+        registered = self._ir_learning_entity_adders.get(serial)
+        if registered is None:
+            return
+        async_add_entities, entity_factory = registered
+        async_add_entities([entity_factory()], True)
+        self._ir_learning_entities.add(serial)
 
     def command_active(self, serial, resource_id):
         library = self.hass.data[DOMAIN].get("library", {})
@@ -340,6 +375,7 @@ class GatewayCoordinator:
                 "permission_state": previous_live.get("permission_state", "unknown"),
                 "devices": previous_live.get("devices", {}),
             }
+        self._add_ir_learning_entity_if_supported(serial)
         self._notify(serial)
         return result
 
@@ -435,6 +471,131 @@ class GatewayCoordinator:
         self._notify(serial)
         return command_id
 
+    def ir_codes(self, serial=None):
+        """所有HA100学习实体读取同一个红外码库。"""
+        return self.hass.data[DOMAIN].setdefault("ir_codes", {})
+
+    async def _save_ir_codes(self):
+        store = self.hass.data[DOMAIN].get("ir_code_store")
+        if store is None:
+            raise HomeAssistantError("IR code storage is not initialized")
+        await store.async_save(self.ir_codes())
+
+    async def learn_ir(self, serial, device, key, timeout=30):
+        """持久化定向学习任务，仅在HA完成保存后返回成功。"""
+        try:
+            validate_names(device, [key])
+        except ValueError as error:
+            raise HomeAssistantError(str(error)) from error
+        async with self.lock:
+            self._check_gateway(serial)
+            existing = self.ir_codes(serial).get(device, {}).get(key)
+            if existing is not None:
+                return copy.deepcopy(existing)  # 同设备同按键保留原码。
+            if not self.has_capability(serial, "ir_learning_uart"):
+                raise HomeAssistantError("HA100 is offline or does not support UART IR learning")
+            codes = self.ir_codes(serial)
+            if (device not in codes and len(codes) >= MAX_DEVICES) or len(codes.get(device, {})) >= MAX_KEYS:
+                raise HomeAssistantError("Learned IR library is full")
+            library = self.hass.data[DOMAIN]["library"]
+            protocol = _protocol_store(library)
+            before = copy.deepcopy(protocol)
+            self._expire_commands(protocol)
+            if self.command_active(serial, "ir_learning"):
+                raise HomeAssistantError("This HA100 is already learning an IR command")
+            command_id = str(uuid4())
+            now = _utc_now()
+            protocol["commands"][command_id] = {
+                "command_id": command_id, "gateway_serial": serial,
+                "command_type": "ir.learn", "command_version": 1,
+                "state": "pending", "created_at": _iso(now), "updated_at": _iso(now),
+                "expires_at": _iso(now + timedelta(seconds=timeout)),
+                "delivery_attempt": 0,
+                "target": {"resource_type": "ir_learning", "resource_id": "ir_learning"},
+                "parameters": {"device": device, "command": key, "mode": "uart"},
+            }
+            try:
+                await self._save()
+            except Exception as error:
+                library["gateway_runtime_protocol"] = before
+                raise HomeAssistantError("Unable to persist IR learning command") from error
+            event = asyncio.Event()
+            self._ir_waiters[command_id] = (serial, event)
+            count = self._pending_count(protocol, serial)
+        self._notify(serial)
+        try:
+            self.hass.bus.async_fire(COMMAND_EVENT, {
+                "protocol_version": 1, "schema_version": 1,
+                "gateway_serial": serial, "pending_command_count": count,
+            })
+            try:
+                await asyncio.wait_for(event.wait(), timeout)
+            except asyncio.TimeoutError as error:
+                raise HomeAssistantError("IR learning timed out") from error
+            command = _protocol_store(self.hass.data[DOMAIN]["library"])["commands"].get(command_id, {})
+            if command.get("state") != "succeeded":
+                message = command.get("ack", {}).get("error", {}).get("message", "IR learning canceled or gateway unloaded")
+                raise HomeAssistantError(message)
+            return copy.deepcopy(command["ack"]["result"])
+        finally:
+            self._ir_waiters.pop(command_id, None)
+            # 动作取消后终止任务，避免后续回复重新保存已取消的按键。
+            async with self.lock:
+                library = self.hass.data[DOMAIN]["library"]
+                protocol = _protocol_store(library)
+                command = protocol["commands"].get(command_id)
+                if command and command["state"] not in TERMINAL_STATES:
+                    before = copy.deepcopy(protocol)
+                    command["state"] = "expired" if _parse(command["expires_at"]) <= _utc_now() else "canceled"
+                    command["updated_at"] = _iso()
+                    try:
+                        await self._save()
+                    except Exception:
+                        library["gateway_runtime_protocol"] = before
+                        raise
+            self._notify(serial)
+
+    async def delete_ir(self, serial, device, keys):
+        """HA标准删除动作只修改码库，不下发APK删除命令。"""
+        async with self.lock:
+            self._check_gateway(serial)
+            library = self.hass.data[DOMAIN]["library"]
+            all_codes = self.ir_codes()
+            before_codes = copy.deepcopy(all_codes)
+            protocol = _protocol_store(library)
+            before_protocol = copy.deepcopy(protocol)
+            codes = all_codes.get(device, {})
+            for key in keys:
+                codes.pop(key, None)
+            if not codes:
+                all_codes.pop(device, None)
+            canceled = []
+            for command_id, command in protocol["commands"].items():
+                if (command.get("command_type") == "ir.learn"
+                        and command.get("state") not in TERMINAL_STATES
+                        and command["parameters"]["device"] == device
+                        and command["parameters"]["command"] in keys):
+                    command["state"] = "canceled"
+                    command["updated_at"] = _iso()
+                    canceled.append(command_id)
+            try:
+                await self._save_ir_codes()
+                await self._save()
+            except Exception as error:
+                shared = self.hass.data[DOMAIN]
+                shared["ir_codes"] = before_codes
+                library["gateway_runtime_protocol"] = before_protocol
+                try:
+                    await self._save_ir_codes()
+                except Exception:
+                    pass
+                raise HomeAssistantError("Unable to delete learned IR commands") from error
+            for command_id in canceled:
+                waiter = self._ir_waiters.get(command_id)
+                if waiter:
+                    waiter[1].set()
+        self._notify(serial)
+
     async def get_pending(self, message):
         route = message["type"]
         serial = message["gateway_serial"]
@@ -451,6 +612,7 @@ class GatewayCoordinator:
                 command for command in protocol["commands"].values()
                 if command.get("gateway_serial") == serial
                 and command.get("state") in {"pending", "dispatched"}
+                and (message["schema_version"] == 2 or command.get("command_type") == "bluetooth.unpair")
             ]
             candidates.sort(key=lambda item: item["created_at"])
             selected = candidates[:message["payload"]["limit"]]
@@ -510,25 +672,46 @@ class GatewayCoordinator:
                     command["updated_at"] = _iso()
                     await self._save()
                     raise ValueError("command_conflict")
+                if payload["command_type"] == "ir.learn" and payload["status"] == "succeeded":
+                    validate_learning_result(payload["result"])
                 before_protocol = copy.deepcopy(protocol)
+                before_codes = copy.deepcopy(self.ir_codes())
                 all_inventory = library.setdefault("bluetooth_devices", {})
                 before_inventory = copy.deepcopy(all_inventory.get(serial, {}))
                 command["state"] = payload["status"]
                 command["ack"] = copy.deepcopy(payload)
                 command["updated_at"] = _iso()
                 if payload["status"] == "succeeded":
-                    all_inventory.setdefault(serial, {}).pop(command["target"]["resource_id"], None)
+                    if payload["command_type"] == "ir.learn":
+                        parameters = command["parameters"]
+                        codes = self.ir_codes().setdefault(parameters["device"], {})
+                        codes.setdefault(parameters["command"], {**copy.deepcopy(payload["result"]), "learned_at": _iso()})
+                    else:
+                        all_inventory.setdefault(serial, {}).pop(command["target"]["resource_id"], None)
                 result = {
                     "accepted": True, "command_id": payload["command_id"],
                     "command_state": payload["status"], "duplicate": False,
                 }
                 self._record_sequence(protocol, message, route, result)
                 try:
-                    await self._save()
+                    if payload["command_type"] == "ir.learn" and payload["status"] == "succeeded":
+                        await self._save_ir_codes()
+                        await self._save()
+                    else:
+                        await self._save()
                 except Exception:
                     library["gateway_runtime_protocol"] = before_protocol
                     all_inventory[serial] = before_inventory
+                    self.hass.data[DOMAIN]["ir_codes"] = before_codes
+                    if payload["command_type"] == "ir.learn":
+                        try:
+                            await self._save_ir_codes()
+                        except Exception:
+                            pass
                     raise
+            waiter = self._ir_waiters.get(payload["command_id"])
+            if waiter:
+                waiter[1].set()
         self._notify(serial)
         return result
 
