@@ -1,4 +1,4 @@
-"""蓝牙取消配对按钮的实体翻译契约测试。"""
+"""按钮实体暴露范围测试。"""
 import ast
 import json
 from pathlib import Path
@@ -9,33 +9,21 @@ ROOT = Path(__file__).resolve().parents[1]
 COMPONENT = ROOT / "custom_components" / "my_ir"
 
 
-class ButtonTranslationTests(unittest.TestCase):
-    """确保按钮名称来自 HA 翻译资源，而不是 Python 硬编码。"""
+class ButtonExposureTests(unittest.TestCase):
+    """确保 Integration 不再暴露蓝牙取消配对按钮。"""
 
-    def test_bluetooth_unpair_name_uses_translation_key(self):
+    def test_bluetooth_unpair_button_is_not_exposed(self):
         tree = ast.parse((COMPONENT / "button.py").read_text(encoding="utf-8-sig"))
-        target = next(
-            node for node in tree.body
-            if isinstance(node, ast.ClassDef) and node.name == "BluetoothUnpairButton"
-        )
-        assignments = {
-            item.targets[0].id: item.value
-            for item in target.body
-            if isinstance(item, ast.Assign)
-            and len(item.targets) == 1
-            and isinstance(item.targets[0], ast.Name)
+        class_names = {
+            node.name for node in tree.body if isinstance(node, ast.ClassDef)
         }
-        self.assertEqual(assignments["_attr_translation_key"].value, "unpair")
-        self.assertNotIn("_attr_name", assignments)
+        self.assertNotIn("BluetoothUnpairButton", class_names)
 
-        expected = {
-            "strings.json": "Delete and Unpair",
-            "translations/en.json": "Delete and Unpair",
-            "translations/zh-Hans.json": "Delete and Unpair",
-        }
-        for relative_path, name in expected.items():
+        for relative_path in (
+            "strings.json", "translations/en.json", "translations/zh-Hans.json"
+        ):
             content = json.loads((COMPONENT / relative_path).read_text(encoding="utf-8-sig"))
-            self.assertEqual(content["entity"]["button"]["unpair"]["name"], name)
+            self.assertNotIn("unpair", content["entity"]["button"])
 
 
 if __name__ == "__main__":

@@ -46,9 +46,6 @@
     "button": {
       "refresh": {
         "name": "Remote Data Sync"
-      },
-      "unpair": {
-        "name": "Delete and Unpair"
       }
     },
     "select": {

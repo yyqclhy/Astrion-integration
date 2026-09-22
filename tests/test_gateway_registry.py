@@ -51,7 +51,7 @@ class DeviceRegistry:
 
 
 class BluetoothRegistryTests(unittest.IsolatedAsyncioTestCase):
-    async def test_reconcile_removes_only_stale_bluetooth_child(self):
+    async def test_reconcile_removes_stale_children_and_legacy_unpair_buttons(self):
         hass = Hass()
         entries = EntityRegistry([
             RegistryEntry("remote.current", "gateway-a_bluetooth_aabb", "current"),
@@ -94,7 +94,7 @@ class BluetoothRegistryTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(
             set(entries.entities),
-            {"remote.current", "button.current", "button.refresh", "remote.other"},
+            {"remote.current", "button.refresh", "remote.other"},
         )
         self.assertEqual(set(devices.devices), {"current", "gateway", "other"})
 

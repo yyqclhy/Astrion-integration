@@ -122,7 +122,7 @@ class BluetoothCoordinator:
             self.runtime[serial] = {
                 "seen": monotonic(), "adapter_state": data["adapter_state"],
                 "permission_state": data["permission_state"], "devices": devices,
-                "capabilities": {"bluetooth_hid", "bluetooth_inventory", "bluetooth_unpair"},
+                "capabilities": {"bluetooth_hid", "bluetooth_inventory"},
             }
             self._notify(serial)
             return sum(1 for d in after.values() if d.get("paired"))

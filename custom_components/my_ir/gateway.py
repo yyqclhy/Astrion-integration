@@ -30,7 +30,6 @@ from .ir_learning_data import MAX_DEVICES, MAX_KEYS, validate_learning_result, v
 HEARTBEAT_INTERVAL = 60
 ONLINE_TIMEOUT = 180
 EXPIRY_INTERVAL = 30
-UNPAIR_EXPIRY = 120
 TERMINAL_RETENTION = 24 * 60 * 60
 COMMAND_EVENT = f"{DOMAIN}/gateway/command_available"
 TERMINAL_STATES = {"succeeded", "failed", "rejected", "expired", "canceled"}
@@ -99,9 +98,8 @@ async def async_remove_bluetooth_entity(hass, entity, entity_domain):
 async def async_reconcile_bluetooth_registry(hass, serial, inventory):
     """清理旧版集成遗留的过期蓝牙注册表记录。
 
-    成功获取的完整设备清单是权威依据。只处理属于当前网关的蓝牙 Remote 与
-    取消配对按钮的唯一标识；网关实体、红外实体，以及其他网关的蓝牙子设备
-    均不在此次清理范围内。
+    成功获取的完整设备清单是权威依据。移除旧版取消配对按钮，并只保留当前
+    网关库存中的蓝牙 Remote；网关实体、红外实体和其他网关均不在清理范围内。
     """
     from homeassistant.helpers import device_registry as dr, entity_registry as er
 
@@ -122,8 +120,7 @@ async def async_reconcile_bluetooth_registry(hass, serial, inventory):
             or not unique_id.startswith(prefix)
         ):
             continue
-        device_unique_id = unique_id[:-7] if unique_id.endswith("_unpair") else unique_id
-        if device_unique_id not in expected_device_ids:
+        if unique_id.endswith("_unpair") or unique_id not in expected_device_ids:
             entity_registry.async_remove(entry.entity_id)
 
     device_registry = dr.async_get(hass)
@@ -259,18 +256,6 @@ class GatewayCoordinator:
             and command.get("state") not in TERMINAL_STATES
             and command.get("target", {}).get("resource_id") == resource_id
             for command in commands.values()
-        )
-
-    def can_unpair(self, serial, resource_id):
-        device = self.inventory(serial).get(resource_id)
-        live = self.live(serial)
-        return bool(
-            device and device.get("paired")
-            and "bluetooth_unpair" in live.get("capabilities", set())
-            and "bluetooth_inventory" in live.get("capabilities", set())
-            and live.get("adapter_state") == "on"
-            and live.get("permission_state") == "granted"
-            and not self.command_active(serial, resource_id)
         )
 
     def _check_gateway(self, serial):
@@ -426,50 +411,6 @@ class GatewayCoordinator:
                 live["devices"] = {}
         self._notify(serial)
         return result
-
-    async def create_unpair(self, serial, resource_id):
-        """先持久化取消配对命令，再发送可能丢失的唤醒事件。"""
-        async with self.lock:
-            if not self.can_unpair(serial, resource_id):
-                raise HomeAssistantError("Bluetooth unpair is unavailable for this gateway or device")
-            shared = self.hass.data[DOMAIN]
-            library = shared["library"]
-            protocol = _protocol_store(library)
-            before = copy.deepcopy(protocol)
-            now = _utc_now()
-            target = self.inventory(serial)[resource_id]
-            command_id = str(uuid4())
-            protocol["commands"][command_id] = {
-                "command_id": command_id,
-                "gateway_serial": serial,
-                "command_type": "bluetooth.unpair",
-                "command_version": 1,
-                "state": "pending",
-                "created_at": _iso(now),
-                "updated_at": _iso(now),
-                "expires_at": _iso(now + timedelta(seconds=UNPAIR_EXPIRY)),
-                "delivery_attempt": 0,
-                "target": {
-                    "resource_type": "bluetooth_device",
-                    "resource_id": resource_id,
-                    "bluetooth_address": target["bluetooth_address"],
-                },
-                "parameters": {},
-            }
-            try:
-                await self._save()
-            except Exception:
-                library["gateway_runtime_protocol"] = before
-                raise HomeAssistantError("Unable to persist Bluetooth unpair command")
-            count = self._pending_count(protocol, serial)
-        self.hass.bus.async_fire(COMMAND_EVENT, {
-            "protocol_version": 1,
-            "schema_version": 1,
-            "gateway_serial": serial,
-            "pending_command_count": count,
-        })
-        self._notify(serial)
-        return command_id
 
     def ir_codes(self, serial=None):
         """所有HA100学习实体读取同一个红外码库。"""

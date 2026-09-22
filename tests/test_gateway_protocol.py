@@ -113,47 +113,6 @@ class GatewayProtocolTests(unittest.IsolatedAsyncioTestCase):
         await self.manager.heartbeat(DATA.validate_heartbeat(capable))
         self.assertEqual(len(added), 1)
 
-    async def test_unpair_requires_success_ack_before_delete(self):
-        await self.online_with_inventory()
-        command_id = await self.manager.create_unpair("gateway-a", "bt_aabbccddeeff")
-        self.assertIn("bt_aabbccddeeff", self.manager.inventory("gateway-a"))
-        self.assertFalse(self.manager.can_unpair("gateway-a", "bt_aabbccddeeff"))
-        self.assertEqual(self.hass.bus.events[-1][0], "astrion/gateway/command_available")
-
-        request = envelope("astrion/gateway/get_pending_commands", self.boot, 0, {"limit": 20})
-        pending = await self.manager.get_pending(DATA.validate_get_pending(request))
-        self.assertEqual(pending["commands"][0]["command_id"], command_id)
-        self.assertEqual(pending["commands"][0]["delivery_attempt"], 1)
-        self.assertIn("bt_aabbccddeeff", self.manager.inventory("gateway-a"))
-
-        ack = envelope("astrion/gateway/ack_command", self.boot, 0, {
-            "command_id": command_id,
-            "command_type": "bluetooth.unpair",
-            "command_version": 1,
-            "status": "succeeded",
-            "result": {"bond_state": "none", "outcome": "unpaired"},
-        })
-        result = await self.manager.ack(DATA.validate_ack(ack))
-        self.assertFalse(result["duplicate"])
-        self.assertNotIn("bt_aabbccddeeff", self.manager.inventory("gateway-a"))
-
-    async def test_failed_ack_keeps_entity_and_complete_inventory_repairs(self):
-        await self.online_with_inventory()
-        command_id = await self.manager.create_unpair("gateway-a", "bt_aabbccddeeff")
-        failed = envelope("astrion/gateway/ack_command", self.boot, 0, {
-            "command_id": command_id,
-            "command_type": "bluetooth.unpair",
-            "command_version": 1,
-            "status": "failed",
-            "error": {"code": "unpair_timeout", "message": "timeout", "retryable": True},
-        })
-        await self.manager.ack(DATA.validate_ack(failed))
-        self.assertIn("bt_aabbccddeeff", self.manager.inventory("gateway-a"))
-        await self.manager.upload_inventory(DATA.validate_inventory(inventory(self.boot, sequence=1, devices=[])))
-        self.assertEqual(self.manager.inventory("gateway-a"), {})
-        await self.manager.upload_inventory(DATA.validate_inventory(inventory(self.boot, sequence=2)))
-        self.assertIn("bt_aabbccddeeff", self.manager.inventory("gateway-a"))
-
     async def test_sequence_retry_is_idempotent_and_conflict_is_rejected(self):
         message = DATA.validate_heartbeat(heartbeat(self.boot))
         first = await self.manager.heartbeat(message)
