@@ -7,10 +7,13 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import re
 from uuid import UUID
 
 from .ir_learning_data import validate_learning_result
+
+_LOGGER = logging.getLogger(__name__)
 
 PROTOCOL_VERSION = 1
 SCHEMA_VERSION = 1
@@ -93,6 +96,11 @@ def validate_envelope(data, expected_type, schema_versions=(SCHEMA_VERSION,)):
     if not _plain_int(data.get("protocol_version")) or data["protocol_version"] != PROTOCOL_VERSION:
         raise ValueError("unsupported_protocol")
     if not _plain_int(data.get("schema_version")) or data["schema_version"] not in schema_versions:
+        _LOGGER.warning(
+            "网关请求schema校验失败：路由=%s，收到=%r，类型=%s，支持=%s，文件=%s",
+            expected_type, data.get("schema_version"), type(data.get("schema_version")).__name__,
+            schema_versions, __file__,
+        )
         raise ValueError("unsupported_schema")
     serial = data.get("gateway_serial")
     if not _string(serial) or serial != serial.strip():

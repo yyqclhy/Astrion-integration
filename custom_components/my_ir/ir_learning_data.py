@@ -4,6 +4,7 @@ from __future__ import annotations
 MAX_DEVICES = 100
 MAX_KEYS = 200
 MAX_PULSES = 4096
+MAX_LEARNING_WORDS = MAX_PULSES * 2 + 2
 
 
 def validate_names(device, commands):
@@ -24,7 +25,7 @@ def validate_raw_code(code):
     if not isinstance(code, str) or not 1 <= len(code) <= 32768:
         raise ValueError("invalid_ir_code")
     parts = code.split(",")
-    if not 4 <= len(parts) <= MAX_PULSES + 1 or any(
+    if not 3 <= len(parts) <= MAX_PULSES + 1 or any(
         not part.isascii() or not part.isdigit() or len(part) > 7 for part in parts
     ):
         raise ValueError("invalid_ir_code")
@@ -45,16 +46,43 @@ def validate_learning_result(result):
     try:
         values = validate_raw_code(result["code"])
         raw_hex = result["raw_data_hex"]
-        if (not isinstance(raw_hex, str) or len(raw_hex) != (len(values) - 1) * 4 + 8
-                or len(raw_hex) > MAX_PULSES * 4 + 8):
+        if (not isinstance(raw_hex, str) or len(raw_hex) < (len(values) - 1) * 4 + 8
+                or len(raw_hex) > MAX_LEARNING_WORDS * 4 or len(raw_hex) % 4):
             raise ValueError("invalid_payload")
         raw = bytes.fromhex(raw_hex)
-        if len(raw) * 2 != len(raw_hex) or raw[-4:] != b"\xff\xff\xff\xff" or values[0] != 38000:
+        if (len(raw) * 2 != len(raw_hex) or raw[-4:] != b"\xff\xff\xff\xff"
+                or values[0] not in (38000, 56000)):
             raise ValueError("invalid_payload")
-        for index, duration in enumerate(values[1:]):
-            word = int.from_bytes(raw[index * 2:index * 2 + 2], "big")
-            if bool(word & 0x8000) != (index % 2 == 0) or (word & 0x7fff) * 10 != duration:
+        timings = raw[:-4]
+        decoded = []
+        has_marker = False
+        offset = 0
+        while offset < len(timings):
+            word = int.from_bytes(timings[offset:offset + 2], "big")
+            if word == 0 and timings[offset + 2:offset + 4] == b"\x99\x99":
+                has_marker = True
+                offset += 4
+                continue
+            if word == 0x9999:
+                has_marker = True
+                offset += 2
+                continue
+            duration = (word & 0x7fff) * 10
+            space = bool(word & 0x8000)
+            if not duration or (not decoded and space):
                 raise ValueError("invalid_payload")
+            if decoded and space != (len(decoded) % 2 != 0):
+                if not has_marker or space != ((len(decoded) - 1) % 2 != 0):
+                    raise ValueError("invalid_payload")
+                decoded[-1] += duration
+            else:
+                if len(decoded) >= MAX_PULSES:
+                    raise ValueError("invalid_payload")
+                decoded.append(duration)
+            has_marker = False
+            offset += 2
+        if has_marker or decoded != values[1:]:
+            raise ValueError("invalid_payload")
     except (ValueError, TypeError, OverflowError) as error:
         raise ValueError("invalid_payload") from error
     return result

@@ -349,6 +349,16 @@ class GatewayCoordinator:
             else:
                 result = duplicate
             previous_live = self.runtime.get(serial, {})
+            if (previous_live.get("boot_id")
+                    and previous_live["boot_id"] != message["boot_id"]
+                    and monotonic() - previous_live.get("seen", 0) < ONLINE_TIMEOUT):
+                _LOGGER.info(
+                    "网关会话切换：serial=%s，原boot_id=%s，当前boot_id=%s，原版本=%s，当前版本=%s，原能力=%s，当前能力=%s",
+                    serial, previous_live["boot_id"], message["boot_id"],
+                    previous_live.get("app_version"), message["payload"]["app_version"],
+                    sorted(previous_live.get("capabilities", set())),
+                    sorted(message["payload"]["capabilities"]),
+                )
             self.runtime[serial] = {
                 "seen": monotonic(),
                 "expired": False,
@@ -549,6 +559,12 @@ class GatewayCoordinator:
             if duplicate is not None:
                 return duplicate
             self._expire_commands(protocol)
+            if message["schema_version"] == 1 and any(
+                    command.get("gateway_serial") == serial
+                    and command.get("state") in {"pending", "dispatched"}
+                    and command.get("command_type") == "ir.learn"
+                    for command in protocol["commands"].values()):
+                _LOGGER.warning("网关 %s 使用 schema 1 拉取任务，红外学习命令不会被返回", serial)
             candidates = [
                 command for command in protocol["commands"].values()
                 if command.get("gateway_serial") == serial
@@ -699,6 +715,11 @@ async def _respond(connection, msg, validator, operation, label):
         validated = validator(msg)
         result = await operation(validated)
     except ValueError as error:
+        if str(error) == "unsupported_schema":
+            _LOGGER.warning(
+                "网关命令schema不支持：路由=%s，收到=%r，校验器=%s",
+                msg.get("type"), msg.get("schema_version"), validator.__code__.co_filename,
+            )
         connection.send_error(msg["id"], str(error), f"{label} rejected")
     except Exception:
         _LOGGER.exception("%s failed for gateway %s", label, msg.get("gateway_serial"))

@@ -78,7 +78,7 @@ class GatewayContractTests(unittest.TestCase):
                 "command_id": str(uuid.uuid4()), "command_type": "ir.learn", "command_version": 1,
                 "status": "succeeded", "result": {
                     "format": "raw", "code": "38000,9000,4500,560",
-                    "raw_data_hex": "838401c28038ffffffff",
+                    "raw_data_hex": "038481c20038ffffffff",
                 },
             },
         }
@@ -90,13 +90,29 @@ class GatewayContractTests(unittest.TestCase):
         for replacement in [
             {"simulated": False}, {"format": "broadlink"}, {"code": "38000,-1,4500,560"},
             {"code": "38000,9001,4500,560"}, {"code": "38000,9000,4500"},
-            {"raw_data_hex": "038401c28038ffffffff"},
-            {"raw_data_hex": "838401c28038ffffff"}, {"extra": 1},
+            {"raw_data_hex": "838481c20038ffffffff"},
+            {"raw_data_hex": "038481c20038ffffff"}, {"extra": 1},
         ]:
             invalid = copy.deepcopy(valid)
             invalid["payload"]["result"].update(replacement)
             with self.subTest(replacement=replacement), self.assertRaises(ValueError):
                 DATA.validate_ack(invalid)
+
+        marked = copy.deepcopy(valid)
+        marked["payload"]["result"] = {
+            "format": "raw", "code": "56000,9000,4500,560,560",
+            "raw_data_hex": "00009999038481c20000999900388038ffffffff",
+        }
+        DATA.validate_ack(marked)
+        marked["payload"]["result"] = {
+            "format": "raw", "code": "56000,1120,1120,560",
+            "raw_data_hex": "0000999900389999003880380000999980380038ffffffff",
+        }
+        DATA.validate_ack(marked)
+        marked["payload"]["result"]["code"] = "56000,560,4500,560"
+        marked["payload"]["result"]["raw_data_hex"] = "003881c2003800009999ffffffff"
+        with self.assertRaises(ValueError):
+            DATA.validate_ack(marked)
 
 
 if __name__ == "__main__":

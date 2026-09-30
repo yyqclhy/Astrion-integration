@@ -150,7 +150,7 @@ class GatewayProtocolTests(unittest.IsolatedAsyncioTestCase):
             "command_id": command_id, "command_type": "ir.learn", "command_version": 1,
             "status": "succeeded", "result": {
                 "format": "raw", "code": "38000,9000,4500,560",
-                "raw_data_hex": "838401c28038ffffffff",
+                "raw_data_hex": "038481c20038ffffffff",
             },
         })
         message["schema_version"] = 2
