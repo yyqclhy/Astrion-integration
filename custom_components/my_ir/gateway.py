@@ -440,13 +440,11 @@ class GatewayCoordinator:
             raise HomeAssistantError(str(error)) from error
         async with self.lock:
             self._check_gateway(serial)
-            existing = self.ir_codes(serial).get(device, {}).get(key)
-            if existing is not None:
-                return copy.deepcopy(existing)  # 同设备同按键保留原码。
             if not self.has_capability(serial, "ir_learning_uart"):
                 raise HomeAssistantError("HA100 is offline or does not support UART IR learning")
             codes = self.ir_codes(serial)
-            if (device not in codes and len(codes) >= MAX_DEVICES) or len(codes.get(device, {})) >= MAX_KEYS:
+            if ((device not in codes and len(codes) >= MAX_DEVICES)
+                    or (key not in codes.get(device, {}) and len(codes.get(device, {})) >= MAX_KEYS)):
                 raise HomeAssistantError("Learned IR library is full")
             library = self.hass.data[DOMAIN]["library"]
             protocol = _protocol_store(library)
@@ -454,6 +452,15 @@ class GatewayCoordinator:
             self._expire_commands(protocol)
             if self.command_active(serial, "ir_learning"):
                 raise HomeAssistantError("This HA100 is already learning an IR command")
+            # 公共码库中的同一按键只允许一个学习任务，避免不同网关互相覆盖。
+            if any(
+                command.get("command_type") == "ir.learn"
+                and command.get("state") not in TERMINAL_STATES
+                and command["parameters"]["device"] == device
+                and command["parameters"]["command"] == key
+                for command in protocol["commands"].values()
+            ):
+                raise HomeAssistantError("This IR command is already being learned")
             command_id = str(uuid4())
             now = _utc_now()
             protocol["commands"][command_id] = {
@@ -642,7 +649,8 @@ class GatewayCoordinator:
                     if payload["command_type"] == "ir.learn":
                         parameters = command["parameters"]
                         codes = self.ir_codes().setdefault(parameters["device"], {})
-                        codes.setdefault(parameters["command"], {**copy.deepcopy(payload["result"]), "learned_at": _iso()})
+                        # 校验成功后覆盖旧码；长期码库只保存原始频率和脉冲。
+                        codes[parameters["command"]] = {"code": payload["result"]["code"]}
                     else:
                         all_inventory.setdefault(serial, {}).pop(command["target"]["resource_id"], None)
                 result = {
