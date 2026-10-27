@@ -214,16 +214,59 @@ def validate_get_pending(data):
     return data
 
 
+STATUS_FIELDS = {"battery_level", "charging", "screen_on", "brightness"}
+# 设备控制命令走持久化队列，ACK 使用 schema 2 回报执行后的实际状态。
+DEVICE_COMMANDS = {"device.set_brightness", "device.screen_on", "device.screen_off"}
+COMMAND_TYPES = {"bluetooth.unpair", "ir.learn"} | DEVICE_COMMANDS
+
+
+def validate_status(data):
+    """校验APK设备状态上报。
+
+    只接受实际提供的字段，缺失表示当前未知；不允许上报0或false代替未知值。
+    """
+    data = validate_envelope(data, "astrion/gateway/status", (2,))
+    payload = data["payload"]
+    if not payload or set(payload) - STATUS_FIELDS:
+        raise ValueError("invalid_payload")
+    if "battery_level" in payload and (
+            not _plain_int(payload["battery_level"])
+            or not 0 <= payload["battery_level"] <= 100):
+        raise ValueError("invalid_payload")
+    for key in ("charging", "screen_on"):
+        if key in payload and type(payload[key]) is not bool:
+            raise ValueError("invalid_payload")
+    if "brightness" in payload and (
+            not _plain_int(payload["brightness"])
+            or not 0 <= payload["brightness"] <= 255):
+        raise ValueError("invalid_payload")
+    return data
+
+
+def _validate_device_result(command_type, result):
+    """设备控制成功结果只允许回报执行后的实际状态。"""
+    if not isinstance(result, dict):
+        raise ValueError("invalid_payload")
+    if command_type == "device.set_brightness":
+        if (set(result) != {"brightness"} or not _plain_int(result["brightness"])
+                or not 0 <= result["brightness"] <= 255):
+            raise ValueError("invalid_payload")
+    elif set(result) != {"screen_on"} or type(result.get("screen_on")) is not bool:
+        raise ValueError("invalid_payload")
+
+
 def validate_ack(data):
     data = validate_envelope(data, "astrion/gateway/ack_command", (1, 2))
     payload = data["payload"]
     required = {"command_id", "command_type", "command_version", "status"}
     if not required <= set(payload) or set(payload) - required - {"result", "error"}:
         raise ValueError("invalid_payload")
-    is_learning = payload.get("command_type") == "ir.learn"
+    command_type = payload.get("command_type")
+    is_learning = command_type == "ir.learn"
+    is_device = command_type in DEVICE_COMMANDS
     if (not _uuid(payload.get("command_id"))
-            or payload.get("command_type") not in {"bluetooth.unpair", "ir.learn"}
-            or (is_learning and data["schema_version"] != 2)):
+            or command_type not in COMMAND_TYPES
+            or ((is_learning or is_device) and data["schema_version"] != 2)):
         raise ValueError("invalid_payload")
     if not _plain_int(payload.get("command_version")) or payload["command_version"] != 1:
         raise ValueError("invalid_payload")
@@ -236,6 +279,8 @@ def validate_ack(data):
         result = payload["result"]
         if is_learning:
             validate_learning_result(result)
+        elif is_device:
+            _validate_device_result(command_type, result)
         elif (not isinstance(result, dict) or set(result) != {"bond_state", "outcome"}
                 or result.get("bond_state") != "none"
                 or result.get("outcome") not in {"unpaired", "already_unpaired"}):

@@ -23,6 +23,7 @@ from .gateway import (
     websocket_gateway_ack,
     websocket_gateway_get_pending,
     websocket_gateway_heartbeat,
+    websocket_gateway_status,
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -30,7 +31,7 @@ _LOGGER = logging.getLogger(__name__)
 STORAGE_VERSION = 1
 STORAGE_KEY = f"{DOMAIN}.library"
 IR_CODE_STORAGE_KEY = f"{DOMAIN}_ir_codes"
-PLATFORMS = ["remote", "select", "button"]
+PLATFORMS = ["remote", "select", "button", "sensor", "binary_sensor", "number"]
 MAX_BROADLINK_DEVICES = 100
 MAX_BROADLINK_KEYS_PER_DEVICE = 200
 MAX_BROADLINK_CODE_LENGTH = 16_384
@@ -109,6 +110,7 @@ async def async_setup(hass: HomeAssistant, config: dict) -> bool:
     websocket_api.async_register_command(hass, websocket_gateway_heartbeat)
     websocket_api.async_register_command(hass, websocket_gateway_get_pending)
     websocket_api.async_register_command(hass, websocket_gateway_ack)
+    websocket_api.async_register_command(hass, websocket_gateway_status)
     websocket_api.async_register_command(hass, websocket_bluetooth_inventory)
     _LOGGER.info("[Startup] WebSocket handlers registered successfully!")
 
@@ -227,6 +229,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     websocket_api.async_register_command(hass, websocket_gateway_heartbeat)
     websocket_api.async_register_command(hass, websocket_gateway_get_pending)
     websocket_api.async_register_command(hass, websocket_gateway_ack)
+    websocket_api.async_register_command(hass, websocket_gateway_status)
     websocket_api.async_register_command(hass, websocket_bluetooth_inventory)
 
     # 加载遥控器实体平台 + 网关场景选择器

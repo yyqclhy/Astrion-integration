@@ -46,6 +46,12 @@
     "button": {
       "refresh": {
         "name": "Remote Data Sync"
+      },
+      "screen_wake": {
+        "name": "Wake Screen"
+      },
+      "screen_sleep": {
+        "name": "Turn Off Screen"
       }
     },
     "select": {
@@ -54,6 +60,24 @@
       },
       "scene": {
         "name": "Navigate Action"
+      }
+    },
+    "sensor": {
+      "battery": {
+        "name": "Battery"
+      }
+    },
+    "binary_sensor": {
+      "charging": {
+        "name": "Charging"
+      },
+      "screen_on": {
+        "name": "Screen"
+      }
+    },
+    "number": {
+      "screen_brightness": {
+        "name": "Screen Brightness"
       }
     }
   }

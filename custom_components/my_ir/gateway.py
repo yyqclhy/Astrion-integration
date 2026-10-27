@@ -23,6 +23,7 @@ from .bluetooth_data import (
     validate_get_pending,
     validate_heartbeat,
     validate_inventory,
+    validate_status,
 )
 from .const import DOMAIN
 from .ir_learning_data import MAX_DEVICES, MAX_KEYS, validate_learning_result, validate_names
@@ -32,6 +33,15 @@ ONLINE_TIMEOUT = 180
 EXPIRY_INTERVAL = 30
 TERMINAL_RETENTION = 24 * 60 * 60
 COMMAND_EVENT = f"{DOMAIN}/gateway/command_available"
+# APK声明后才会创建对应实体；旧版APK不声明，避免出现长期不可用的实体。
+CAPABILITY_DEVICE_STATUS = "device_status"
+CAPABILITY_DEVICE_CONTROL = "device_control"
+# 设备控制命令走持久化队列，但只保留很短的有效期；离线不排队补执行。
+DEVICE_COMMAND_BRIGHTNESS = "device.set_brightness"
+DEVICE_COMMAND_SCREEN_ON = "device.screen_on"
+DEVICE_COMMAND_SCREEN_OFF = "device.screen_off"
+DEVICE_COMMAND_TIMEOUT = 10
+DEVICE_COMMAND_TARGET = {"resource_type": "device_control", "resource_id": "screen"}
 TERMINAL_STATES = {"succeeded", "failed", "rejected", "expired", "canceled"}
 _LOGGER = logging.getLogger(__name__)
 
@@ -39,6 +49,16 @@ _LOGGER = logging.getLogger(__name__)
 def signal(serial):
     """供各个依赖网关的实体平台共用的分发信号。"""
     return f"{DOMAIN}_gateway_{serial}"
+
+
+def gateway_device_info(serial):
+    """网关设备注册信息，供挂载在网关上的实体共用。"""
+    return {
+        "identifiers": {(DOMAIN, serial)},
+        "name": f"Smart Remote SN:{serial}",
+        "manufacturer": "Sanytron",
+        "model": "IR Gateway",
+    }
 
 
 def coordinator(hass):
@@ -171,6 +191,9 @@ class GatewayCoordinator:
         # 记录每个配置条目的实体添加回调。学习实体只有收到APK能力确认后才创建。
         self._ir_learning_entity_adders = {}
         self._ir_learning_entities = set()
+        # 通用能力实体注册器：能力在心跳中声明后才创建，避免旧APK产生永久不可用实体。
+        self._capability_entity_adders = {}
+        self._capability_entities = set()
 
     def start(self, serial):
         if not serial:
@@ -186,6 +209,9 @@ class GatewayCoordinator:
         self.runtime.pop(serial, None)
         self._ir_learning_entity_adders.pop(serial, None)
         self._ir_learning_entities.discard(serial)
+        for identity in [item for item in self._capability_entity_adders if item[0] == serial]:
+            self._capability_entity_adders.pop(identity, None)
+        self._capability_entities = {item for item in self._capability_entities if item[0] != serial}
         for command_id, (gateway_serial, event) in tuple(self._ir_waiters.items()):
             if gateway_serial == serial:
                 event.set()
@@ -206,6 +232,8 @@ class GatewayCoordinator:
             state = self.runtime.get(serial)
             if state and monotonic() - state.get("seen", 0) > ONLINE_TIMEOUT and not state.get("expired"):
                 state["expired"] = True
+                # 离线不保留最后状态，重连后必须等APK全量同步才恢复可用。
+                state["status"] = {}
                 self._notify(serial)
 
     def inventory(self, serial):
@@ -247,6 +275,40 @@ class GatewayCoordinator:
         async_add_entities, entity_factory = registered
         async_add_entities([entity_factory()], True)
         self._ir_learning_entities.add(serial)
+
+    def register_capability_entity_adder(
+        self, serial, capability, key, async_add_entities, entity_factory
+    ):
+        """注册按能力动态创建的实体。
+
+        APK在心跳中声明对应能力后才添加实体；卸载配置条目时随stop()一起清理。
+        """
+        if not serial:
+            return
+        identity = (serial, capability, key)
+        self._capability_entity_adders[identity] = (async_add_entities, entity_factory)
+        self._add_capability_entity_if_supported(identity)
+
+    def _add_capability_entity_if_supported(self, identity):
+        """能力已声明且尚未添加过时，调用对应平台的实体工厂。"""
+        serial, capability, _ = identity
+        if identity in self._capability_entities or not self.has_capability(serial, capability):
+            return
+        registered = self._capability_entity_adders.get(identity)
+        if registered is None:
+            return
+        async_add_entities, entity_factory = registered
+        async_add_entities(entity_factory(), True)
+        self._capability_entities.add(identity)
+
+    def _add_capability_entities_if_supported(self, serial):
+        """心跳更新能力后，补建此前因能力缺失而未创建的实体。"""
+        for identity in [item for item in self._capability_entity_adders if item[0] == serial]:
+            self._add_capability_entity_if_supported(identity)
+
+    def status(self, serial):
+        """返回网关最近一次上报的设备状态；离线时为空字典。"""
+        return self.live(serial).get("status", {})
 
     def command_active(self, serial, resource_id):
         library = self.hass.data[DOMAIN].get("library", {})
@@ -369,10 +431,71 @@ class GatewayCoordinator:
                 "adapter_state": previous_live.get("adapter_state", "unknown"),
                 "permission_state": previous_live.get("permission_state", "unknown"),
                 "devices": previous_live.get("devices", {}),
+                "status": previous_live.get("status", {}),
             }
         self._add_ir_learning_entity_if_supported(serial)
+        self._add_capability_entities_if_supported(serial)
         self._notify(serial)
         return result
+
+    async def send_device_control(self, serial, command_type, parameters):
+        """创建短有效期的设备控制命令。
+
+        设备控制不排队补执行：命令只在短时间内有效，同类命令只保留最新一条，
+        执行后的实际状态由APK后续状态上报回传。
+        """
+        async with self.lock:
+            self._check_gateway(serial)
+            if not self.has_capability(serial, CAPABILITY_DEVICE_CONTROL):
+                raise HomeAssistantError("HA100 is offline or does not support screen control")
+            library = self.hass.data[DOMAIN]["library"]
+            protocol = _protocol_store(library)
+            before = copy.deepcopy(protocol)
+            self._expire_commands(protocol)
+            now = _utc_now()
+            # 拖动亮度等连续操作用新命令替换旧命令，避免队列积压过期待执行命令。
+            for command in protocol["commands"].values():
+                if (command.get("gateway_serial") == serial
+                        and command.get("command_type") == command_type
+                        and command.get("state") not in TERMINAL_STATES):
+                    command["state"] = "canceled"
+                    command["updated_at"] = _iso(now)
+            command_id = str(uuid4())
+            protocol["commands"][command_id] = {
+                "command_id": command_id, "gateway_serial": serial,
+                "command_type": command_type, "command_version": 1,
+                "state": "pending", "created_at": _iso(now), "updated_at": _iso(now),
+                "expires_at": _iso(now + timedelta(seconds=DEVICE_COMMAND_TIMEOUT)),
+                "delivery_attempt": 0,
+                "target": copy.deepcopy(DEVICE_COMMAND_TARGET),
+                "parameters": copy.deepcopy(parameters),
+            }
+            try:
+                await self._save()
+            except Exception as error:
+                library["gateway_runtime_protocol"] = before
+                raise HomeAssistantError("Unable to persist device control command") from error
+            count = self._pending_count(protocol, serial)
+        self.hass.bus.async_fire(COMMAND_EVENT, {
+            "protocol_version": 1, "schema_version": 1,
+            "gateway_serial": serial, "pending_command_count": count,
+        })
+        return command_id
+
+    async def update_status(self, message):
+        """接收APK设备状态上报。
+
+        状态只驻内存，不落盘，也不参与sequence持久化去重；重连后由APK全量重发。
+        """
+        serial = message["gateway_serial"]
+        async with self.lock:
+            self._check_session(message)
+            live = self.runtime.get(serial)
+            if live is None:
+                raise ValueError("gateway_not_ready")
+            live.setdefault("status", {}).update(message["payload"])
+        self._notify(serial)
+        return {"accepted": True}
 
     async def upload_inventory(self, message):
         route = message["type"]
@@ -651,7 +774,8 @@ class GatewayCoordinator:
                         codes = self.ir_codes().setdefault(parameters["device"], {})
                         # 校验成功后覆盖旧码；长期码库只保存原始频率和脉冲。
                         codes[parameters["command"]] = {"code": payload["result"]["code"]}
-                    else:
+                    elif payload["command_type"] == "bluetooth.unpair":
+                        # 只有取消配对命令需要同步蓝牙库存；设备控制命令不影响库存。
                         all_inventory.setdefault(serial, {}).pop(command["target"]["resource_id"], None)
                 result = {
                     "accepted": True, "command_id": payload["command_id"],
@@ -758,3 +882,9 @@ async def websocket_gateway_get_pending(hass, connection, msg):
 @websocket_api.async_response
 async def websocket_gateway_ack(hass, connection, msg):
     await _respond(connection, msg, validate_ack, coordinator(hass).ack, "command acknowledgement")
+
+
+@websocket_api.websocket_command(_schema(f"{DOMAIN}/gateway/status"))
+@websocket_api.async_response
+async def websocket_gateway_status(hass, connection, msg):
+    await _respond(connection, msg, validate_status, coordinator(hass).update_status, "gateway status")

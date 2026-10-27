@@ -4,7 +4,7 @@ import unittest
 import uuid
 
 from support import DATA
-from test_gateway_protocol import heartbeat, inventory
+from test_gateway_protocol import envelope, heartbeat, inventory
 
 
 class GatewayContractTests(unittest.TestCase):
@@ -29,6 +29,25 @@ class GatewayContractTests(unittest.TestCase):
         duplicate["payload"]["devices"][1]["bluetooth_address"] = "aa:bb:cc:dd:ee:ff"
         with self.assertRaisesRegex(ValueError, "invalid_payload"):
             DATA.validate_inventory(duplicate)
+
+    def test_status_requires_v2_and_rejects_unknown_or_out_of_range(self):
+        message = envelope("astrion/gateway/status", self.boot, 0, {
+            "battery_level": 88, "charging": True, "screen_on": False, "brightness": 200,
+        })
+        message["schema_version"] = 2
+        self.assertEqual(DATA.validate_status(message)["payload"]["battery_level"], 88)
+        for payload in (
+            {}, {"battery_level": -1}, {"battery_level": 101}, {"charging": "yes"},
+            {"screen_on": 1}, {"brightness": 256}, {"unknown": 1},
+        ):
+            invalid = copy.deepcopy(message)
+            invalid["payload"] = payload
+            with self.assertRaisesRegex(ValueError, "invalid_payload"):
+                DATA.validate_status(invalid)
+        legacy = copy.deepcopy(message)
+        legacy["schema_version"] = 1
+        with self.assertRaisesRegex(ValueError, "unsupported_schema"):
+            DATA.validate_status(legacy)
 
     def test_incomplete_inventory_cannot_delete_or_include_devices(self):
         message = inventory(self.boot)
@@ -69,6 +88,34 @@ class GatewayContractTests(unittest.TestCase):
         }
         with self.assertRaisesRegex(ValueError, "invalid_payload"):
             DATA.validate_ack(invalid)
+
+    def test_device_ack_requires_v2_and_actual_state(self):
+        base = {
+            "id": 1, "type": "astrion/gateway/ack_command", "protocol_version": 1,
+            "schema_version": 2, "gateway_serial": "gateway-a", "boot_id": self.boot,
+            "sequence": 0,
+            "payload": {
+                "command_id": str(uuid.uuid4()), "command_type": "device.set_brightness",
+                "command_version": 1, "status": "succeeded", "result": {"brightness": 128},
+            },
+        }
+        DATA.validate_ack(base)
+        legacy = copy.deepcopy(base)
+        legacy["schema_version"] = 1
+        with self.assertRaises(ValueError):
+            DATA.validate_ack(legacy)
+        for result in ({"brightness": 256}, {"brightness": -1}, {"brightness": "128"},
+                       {}, {"screen_on": True}):
+            invalid = copy.deepcopy(base)
+            invalid["payload"]["result"] = result
+            with self.subTest(result=result), self.assertRaises(ValueError):
+                DATA.validate_ack(invalid)
+        screen = copy.deepcopy(base)
+        screen["payload"].update(command_type="device.screen_off", result={"screen_on": False})
+        DATA.validate_ack(screen)
+        screen["payload"]["result"] = {"screen_on": 0}
+        with self.assertRaises(ValueError):
+            DATA.validate_ack(screen)
 
     def test_learning_ack_requires_v2_and_consistent_uart_pulses(self):
         valid = {

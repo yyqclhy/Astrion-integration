@@ -12,7 +12,15 @@ from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.dispatcher import async_dispatcher_connect
 
 from .const import DOMAIN
-from .gateway import async_reconcile_bluetooth_registry, coordinator, signal
+from .gateway import (
+    CAPABILITY_DEVICE_CONTROL,
+    DEVICE_COMMAND_SCREEN_OFF,
+    DEVICE_COMMAND_SCREEN_ON,
+    async_reconcile_bluetooth_registry,
+    coordinator,
+    gateway_device_info,
+    signal,
+)
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -31,6 +39,16 @@ async def async_setup_entry(
         hass, parent_serial, manager.inventory(parent_serial)
     )
     async_add_entities([GatewayRefreshButton(manager, parent_serial)], True)
+    manager.register_capability_entity_adder(
+        parent_serial,
+        CAPABILITY_DEVICE_CONTROL,
+        "screen_control",
+        async_add_entities,
+        lambda: [
+            GatewayScreenButton(manager, parent_serial, "screen_wake", DEVICE_COMMAND_SCREEN_ON, "mdi:monitor"),
+            GatewayScreenButton(manager, parent_serial, "screen_sleep", DEVICE_COMMAND_SCREEN_OFF, "mdi:monitor-off"),
+        ],
+    )
 
 class GatewayRefreshButton(ButtonEntity):
     """请求 Android 网关刷新其 HA 数据的按钮。"""
@@ -74,3 +92,32 @@ class GatewayRefreshButton(ButtonEntity):
             },
         )
         _LOGGER.info("Gateway %s refresh requested from HA button", self._serial)
+
+
+class GatewayScreenButton(ButtonEntity):
+    """通过短有效期控制命令触发网关屏幕唤醒或息屏。"""
+
+    _attr_has_entity_name = True
+    _attr_should_poll = False
+
+    def __init__(self, manager, serial: str, key: str, command_type: str, icon: str) -> None:
+        self._manager = manager
+        self._serial = serial
+        self._command_type = command_type
+        self._attr_unique_id = f"{serial}_{key}"
+        self._attr_translation_key = key
+        self._attr_icon = icon
+        self._attr_device_info = gateway_device_info(serial)
+
+    @property
+    def available(self) -> bool:
+        return self._manager.has_capability(self._serial, CAPABILITY_DEVICE_CONTROL)
+
+    async def async_added_to_hass(self) -> None:
+        await super().async_added_to_hass()
+        self.async_on_remove(
+            async_dispatcher_connect(self.hass, signal(self._serial), self.async_write_ha_state)
+        )
+
+    async def async_press(self) -> None:
+        await self._manager.send_device_control(self._serial, self._command_type, {})

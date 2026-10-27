@@ -76,6 +76,65 @@ class GatewayProtocolTests(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(self.manager.online("gateway-a"))
         self.assertTrue(self.manager.online("gateway-b"))
 
+    async def test_status_updates_memory_and_clears_on_expiry(self):
+        await self.manager.heartbeat(DATA.validate_heartbeat(heartbeat(self.boot)))
+        message = envelope("astrion/gateway/status", self.boot, 0, {
+            "battery_level": 77, "charging": True, "screen_on": True, "brightness": 128,
+        })
+        message["schema_version"] = 2
+        saved = len(self.hass.data["astrion"]["store"].saved)
+        self.assertEqual(
+            await self.manager.update_status(DATA.validate_status(message)),
+            {"accepted": True},
+        )
+        self.assertEqual(self.manager.status("gateway-a")["brightness"], 128)
+        # 状态上报不落盘，避免高频变化反复写存储。
+        self.assertEqual(len(self.hass.data["astrion"]["store"].saved), saved)
+        # 离线后不保留最后状态，重连必须重新全量同步。
+        self.manager.runtime["gateway-a"]["seen"] -= 181
+        self.manager._expire(None)
+        self.assertEqual(self.manager.status("gateway-a"), {})
+
+    async def test_device_control_requires_online_gateway_with_capability(self):
+        with self.assertRaisesRegex(RuntimeError, "offline"):
+            await self.manager.send_device_control(
+                "gateway-a", GATEWAY.DEVICE_COMMAND_SCREEN_ON, {})
+        await self.manager.heartbeat(DATA.validate_heartbeat(heartbeat(self.boot)))
+        with self.assertRaisesRegex(RuntimeError, "offline"):
+            await self.manager.send_device_control(
+                "gateway-a", GATEWAY.DEVICE_COMMAND_SCREEN_ON, {})
+        self.assertEqual(self.hass.bus.events, [])
+
+    async def test_device_control_keeps_latest_command_and_updates_state(self):
+        message = heartbeat(self.boot)
+        message["payload"]["capabilities"].extend(["device_status", "device_control"])
+        await self.manager.heartbeat(DATA.validate_heartbeat(message))
+        first = await self.manager.send_device_control(
+            "gateway-a", GATEWAY.DEVICE_COMMAND_BRIGHTNESS, {"brightness": 30})
+        second = await self.manager.send_device_control(
+            "gateway-a", GATEWAY.DEVICE_COMMAND_BRIGHTNESS, {"brightness": 60})
+        commands = self.hass.data["astrion"]["library"]["gateway_runtime_protocol"]["commands"]
+        # 同类控制命令只保留最新一条，旧命令不再投递。
+        self.assertEqual(commands[first]["state"], "canceled")
+        self.assertEqual(commands[second]["state"], "pending")
+        self.assertEqual(self.hass.bus.events[-1][1]["gateway_serial"], "gateway-a")
+        # 设备控制命令只在schema 2拉取时下发，旧APK不会收到。
+        request = envelope("astrion/gateway/get_pending_commands", self.boot, 0, {"limit": 20})
+        self.assertEqual(
+            (await self.manager.get_pending(DATA.validate_get_pending(request)))["commands"], [])
+        request.update(schema_version=2, sequence=1)
+        pending = await self.manager.get_pending(DATA.validate_get_pending(request))
+        self.assertEqual([item["command_id"] for item in pending["commands"]], [second])
+        ack = envelope("astrion/gateway/ack_command", self.boot, 2, {
+            "command_id": second, "command_type": "device.set_brightness", "command_version": 1,
+            "status": "succeeded", "result": {"brightness": 60},
+        })
+        ack["schema_version"] = 2
+        result = await self.manager.ack(DATA.validate_ack(ack))
+        self.assertEqual(result["command_state"], "succeeded")
+        # 设备控制命令不影响蓝牙库存。
+        self.assertEqual(self.manager.inventory("gateway-a"), {})
+
     async def test_non_heartbeat_from_stale_boot_is_rejected(self):
         await self.manager.heartbeat(DATA.validate_heartbeat(heartbeat(self.boot)))
         stale = inventory(str(uuid.uuid4()))
