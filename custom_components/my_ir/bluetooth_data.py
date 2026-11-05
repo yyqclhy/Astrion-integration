@@ -5,6 +5,7 @@
 """
 from __future__ import annotations
 
+import base64
 import hashlib
 import json
 import logging
@@ -49,6 +50,7 @@ CONNECTION_STATES = {"disconnected", "connecting", "connected", "disconnecting",
 DEVICE_TYPES = {"classic", "le", "dual", "unknown"}
 HID_SUPPORT = {"unknown", "supported", "unsupported"}
 COMMAND_STATUSES = {"succeeded", "failed", "rejected"}
+MOTION_EVENTS = {"picked_up", "placed_down", "motion_detected"}
 COMMAND_ERROR_CODES = {
     "unsupported_command", "invalid_target", "bluetooth_unavailable", "permission_denied",
     "unpair_rejected", "unpair_timeout", "command_expired", "ir_learning_failed", "internal_error",
@@ -79,6 +81,13 @@ def _uuid(value):
         return str(UUID(value)) == value.lower()
     except (ValueError, AttributeError):
         return False
+
+
+def _announce_uuid(value):
+    """播报会话使用 announce- 前缀，其余仍是标准 UUID。"""
+    if isinstance(value, str) and value.startswith("announce-"):
+        return _uuid(value[len("announce-"):])
+    return _uuid(value)
 
 
 def validate_envelope(data, expected_type, schema_versions=(SCHEMA_VERSION,)):
@@ -215,8 +224,13 @@ def validate_get_pending(data):
 
 
 STATUS_FIELDS = {"battery_level", "charging", "screen_on", "brightness"}
-# 设备控制命令走持久化队列，ACK 使用 schema 2 回报执行后的实际状态。
-DEVICE_COMMANDS = {"device.set_brightness", "device.screen_on", "device.screen_off"}
+MEDIA_STATE_FIELDS = {"state", "volume_level", "muted"}
+# 设备控制与媒体播放命令走持久化队列，ACK 都使用 schema 2 回报执行后的实际状态。
+DEVICE_COMMANDS = {
+    "device.set_brightness", "device.screen_on", "device.screen_off",
+    "device.play_media", "device.stop_media", "device.pause_media",
+    "device.resume_media", "device.set_volume", "device.set_mute",
+}
 COMMAND_TYPES = {"bluetooth.unpair", "ir.learn"} | DEVICE_COMMANDS
 
 
@@ -243,13 +257,97 @@ def validate_status(data):
     return data
 
 
+def validate_media_state(data):
+    """校验APK媒体播放状态上报，至少包含一个字段。"""
+    data = validate_envelope(data, "astrion/gateway/media_state")
+    payload = data["payload"]
+    if not payload or set(payload) - MEDIA_STATE_FIELDS:
+        raise ValueError("invalid_payload")
+    if "state" in payload and payload["state"] not in {"idle", "playing", "paused"}:
+        raise ValueError("invalid_payload")
+    if "volume_level" in payload and (
+            not _plain_int(payload["volume_level"])
+            or not 0 <= payload["volume_level"] <= 100):
+        raise ValueError("invalid_payload")
+    if "muted" in payload and type(payload["muted"]) is not bool:
+        raise ValueError("invalid_payload")
+    return data
+
+
+def validate_motion_event(data):
+    """校验APK重力感应事件上报，只接受约定的事件类型。"""
+    data = validate_envelope(data, "astrion/gateway/motion_event")
+    payload = data["payload"]
+    if set(payload) != {"event_type"} or payload["event_type"] not in MOTION_EVENTS:
+        raise ValueError("invalid_payload")
+    return data
+
+
+def validate_assist_session_start(data):
+    data = validate_envelope(data, "astrion/assist/session_start")
+    payload = data["payload"]
+    if set(payload) != {"session_id"} or not _uuid(payload.get("session_id")):
+        raise ValueError("invalid_payload")
+    return data
+
+
+def validate_assist_audio_chunk(data):
+    data = validate_envelope(data, "astrion/assist/audio_chunk")
+    payload = data["payload"]
+    if (set(payload) != {"session_id", "audio"}
+            or not _uuid(payload.get("session_id"))
+            or not isinstance(payload.get("audio"), str)):
+        raise ValueError("invalid_payload")
+    try:
+        decoded = base64.b64decode(payload["audio"], validate=True)
+    except ValueError:
+        raise ValueError("invalid_payload") from None
+    if not 1 <= len(decoded) <= 3200 or len(decoded) % 2:
+        raise ValueError("invalid_payload")
+    return data
+
+
+def validate_assist_session_end(data):
+    data = validate_envelope(data, "astrion/assist/session_end")
+    payload = data["payload"]
+    if set(payload) != {"session_id"} or not _uuid(payload.get("session_id")):
+        raise ValueError("invalid_payload")
+    return data
+
+
+def validate_assist_tts_finished(data):
+    data = validate_envelope(data, "astrion/assist/tts_finished")
+    payload = data["payload"]
+    if set(payload) != {"session_id"} or not _announce_uuid(payload.get("session_id")):
+        raise ValueError("invalid_payload")
+    return data
+
+
 def _validate_device_result(command_type, result):
-    """设备控制成功结果只允许回报执行后的实际状态。"""
+    """设备控制与媒体命令的成功结果只允许回报执行后的实际状态。"""
     if not isinstance(result, dict):
         raise ValueError("invalid_payload")
     if command_type == "device.set_brightness":
         if (set(result) != {"brightness"} or not _plain_int(result["brightness"])
                 or not 0 <= result["brightness"] <= 255):
+            raise ValueError("invalid_payload")
+    elif command_type in {
+            "device.play_media", "device.stop_media",
+            "device.pause_media", "device.resume_media"}:
+        expected = {
+            "device.play_media": "playing",
+            "device.resume_media": "playing",
+            "device.pause_media": "paused",
+            "device.stop_media": "idle",
+        }[command_type]
+        if result != {"state": expected}:
+            raise ValueError("invalid_payload")
+    elif command_type == "device.set_volume":
+        if (set(result) != {"volume"} or not _plain_int(result["volume"])
+                or not 0 <= result["volume"] <= 100):
+            raise ValueError("invalid_payload")
+    elif command_type == "device.set_mute":
+        if set(result) != {"muted"} or type(result.get("muted")) is not bool:
             raise ValueError("invalid_payload")
     elif set(result) != {"screen_on"} or type(result.get("screen_on")) is not bool:
         raise ValueError("invalid_payload")

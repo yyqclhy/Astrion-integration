@@ -95,6 +95,34 @@ class GatewayProtocolTests(unittest.IsolatedAsyncioTestCase):
         self.manager._expire(None)
         self.assertEqual(self.manager.status("gateway-a"), {})
 
+    async def test_motion_event_updates_memory_only(self):
+        message = envelope("astrion/gateway/motion_event", self.boot, 0, {
+            "event_type": "picked_up",
+        })
+        with self.assertRaisesRegex(ValueError, "gateway_not_ready"):
+            await self.manager.update_motion_event(DATA.validate_motion_event(message))
+        await self.manager.heartbeat(DATA.validate_heartbeat(heartbeat(self.boot)))
+        saved = len(self.hass.data["astrion"]["store"].saved)
+        self.assertEqual(
+            await self.manager.update_motion_event(DATA.validate_motion_event(message)),
+            {"accepted": True},
+        )
+        self.assertEqual(self.manager.motion_status("gateway-a"), {
+            "counter": 1, "event_type": "picked_up",
+        })
+        moved = envelope("astrion/gateway/motion_event", self.boot, 1, {
+            "event_type": "motion_detected",
+        })
+        await self.manager.update_motion_event(DATA.validate_motion_event(moved))
+        self.assertEqual(self.manager.motion_status("gateway-a"), {
+            "counter": 2, "event_type": "motion_detected",
+        })
+        # 事件只驻内存，避免高频上报反复写存储。
+        self.assertEqual(len(self.hass.data["astrion"]["store"].saved), saved)
+        self.manager.runtime["gateway-a"]["seen"] -= 181
+        self.manager._expire(None)
+        self.assertEqual(self.manager.motion_status("gateway-a"), {})
+
     async def test_device_control_requires_online_gateway_with_capability(self):
         with self.assertRaisesRegex(RuntimeError, "offline"):
             await self.manager.send_device_control(

@@ -15,14 +15,21 @@ from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers.dispatcher import async_dispatcher_send
 from homeassistant.helpers.event import async_track_time_interval
 
+from .assist_stream import assist_manager
 from .bluetooth_data import (
     device_id,
     merge_inventory,
     request_fingerprint,
     validate_ack,
+    validate_assist_audio_chunk,
+    validate_assist_session_end,
+    validate_assist_session_start,
+    validate_assist_tts_finished,
     validate_get_pending,
     validate_heartbeat,
     validate_inventory,
+    validate_media_state,
+    validate_motion_event,
     validate_status,
 )
 from .const import DOMAIN
@@ -36,12 +43,23 @@ COMMAND_EVENT = f"{DOMAIN}/gateway/command_available"
 # APK声明后才会创建对应实体；旧版APK不声明，避免出现长期不可用的实体。
 CAPABILITY_DEVICE_STATUS = "device_status"
 CAPABILITY_DEVICE_CONTROL = "device_control"
+CAPABILITY_MEDIA_PLAYER = "media_player"
+CAPABILITY_MOTION_EVENT = "motion_event"
+CAPABILITY_ASSIST_SATELLITE = "assist_satellite"
 # 设备控制命令走持久化队列，但只保留很短的有效期；离线不排队补执行。
 DEVICE_COMMAND_BRIGHTNESS = "device.set_brightness"
 DEVICE_COMMAND_SCREEN_ON = "device.screen_on"
 DEVICE_COMMAND_SCREEN_OFF = "device.screen_off"
 DEVICE_COMMAND_TIMEOUT = 10
 DEVICE_COMMAND_TARGET = {"resource_type": "device_control", "resource_id": "screen"}
+# 媒体播放命令与设备控制相同，只保留短有效期和同类型最新一条。
+MEDIA_COMMAND_PLAY = "device.play_media"
+MEDIA_COMMAND_STOP = "device.stop_media"
+MEDIA_COMMAND_PAUSE = "device.pause_media"
+MEDIA_COMMAND_RESUME = "device.resume_media"
+MEDIA_COMMAND_SET_VOLUME = "device.set_volume"
+MEDIA_COMMAND_SET_MUTE = "device.set_mute"
+MEDIA_COMMAND_TARGET = {"resource_type": "media_player", "resource_id": "speaker"}
 TERMINAL_STATES = {"succeeded", "failed", "rejected", "expired", "canceled"}
 _LOGGER = logging.getLogger(__name__)
 
@@ -178,6 +196,20 @@ def _protocol_store(library):
     return data
 
 
+def async_request_apk_refresh(hass, serial, source):
+    """请求 APK 重新拉取实体，用于集成新增实体后立即刷新条目。"""
+    if not serial:
+        return
+    hass.bus.async_fire(
+        f"{DOMAIN}/refresh_request",
+        {
+            "serial_number": serial,
+            "timestamp": _iso(),
+            "source": source,
+        },
+    )
+
+
 class GatewayCoordinator:
     """协调网关在线有效期、持久化命令及权威设备清单。"""
 
@@ -234,6 +266,9 @@ class GatewayCoordinator:
                 state["expired"] = True
                 # 离线不保留最后状态，重连后必须等APK全量同步才恢复可用。
                 state["status"] = {}
+                state["media"] = {}
+                # 网关离线时语音会话必须结束，否则 pipeline 会一直等待音频。
+                assist_manager(self.hass).abort_gateway(serial)
                 self._notify(serial)
 
     def inventory(self, serial):
@@ -293,22 +328,35 @@ class GatewayCoordinator:
         """能力已声明且尚未添加过时，调用对应平台的实体工厂。"""
         serial, capability, _ = identity
         if identity in self._capability_entities or not self.has_capability(serial, capability):
-            return
+            return False
         registered = self._capability_entity_adders.get(identity)
         if registered is None:
-            return
+            return False
         async_add_entities, entity_factory = registered
         async_add_entities(entity_factory(), True)
         self._capability_entities.add(identity)
+        return True
 
     def _add_capability_entities_if_supported(self, serial):
-        """心跳更新能力后，补建此前因能力缺失而未创建的实体。"""
+        """心跳更新能力后，补建此前因能力缺失而未创建的实体，并让 APK 立即刷新条目。"""
+        added = False
         for identity in [item for item in self._capability_entity_adders if item[0] == serial]:
-            self._add_capability_entity_if_supported(identity)
+            if self._add_capability_entity_if_supported(identity):
+                added = True
+        if added:
+            async_request_apk_refresh(self.hass, serial, "capability_added")
 
     def status(self, serial):
         """返回网关最近一次上报的设备状态；离线时为空字典。"""
         return self.live(serial).get("status", {})
+
+    def media_status(self, serial):
+        """返回网关最近一次上报的媒体播放状态；离线时为空字典。"""
+        return self.live(serial).get("media", {})
+
+    def motion_status(self, serial):
+        """返回网关最近一次上报的重力感应事件；离线时为空字典。"""
+        return self.live(serial).get("motion", {})
 
     def command_active(self, serial, resource_id):
         library = self.hass.data[DOMAIN].get("library", {})
@@ -432,28 +480,28 @@ class GatewayCoordinator:
                 "permission_state": previous_live.get("permission_state", "unknown"),
                 "devices": previous_live.get("devices", {}),
                 "status": previous_live.get("status", {}),
+                "media": previous_live.get("media", {}),
+                "motion": previous_live.get("motion", {}),
             }
         self._add_ir_learning_entity_if_supported(serial)
         self._add_capability_entities_if_supported(serial)
         self._notify(serial)
         return result
 
-    async def send_device_control(self, serial, command_type, parameters):
-        """创建短有效期的设备控制命令。
-
-        设备控制不排队补执行：命令只在短时间内有效，同类命令只保留最新一条，
-        执行后的实际状态由APK后续状态上报回传。
-        """
+    async def _create_control_command(
+        self, serial, command_type, parameters, capability, target, unavailable_message
+    ):
+        """创建短有效期控制命令，同类未终态命令只保留最新一条。"""
         async with self.lock:
             self._check_gateway(serial)
-            if not self.has_capability(serial, CAPABILITY_DEVICE_CONTROL):
-                raise HomeAssistantError("HA100 is offline or does not support screen control")
+            if not self.has_capability(serial, capability):
+                raise HomeAssistantError(unavailable_message)
             library = self.hass.data[DOMAIN]["library"]
             protocol = _protocol_store(library)
             before = copy.deepcopy(protocol)
             self._expire_commands(protocol)
             now = _utc_now()
-            # 拖动亮度等连续操作用新命令替换旧命令，避免队列积压过期待执行命令。
+            # 拖动亮度、调整音量等连续操作用新命令替换旧命令，避免队列积压过期待执行命令。
             for command in protocol["commands"].values():
                 if (command.get("gateway_serial") == serial
                         and command.get("command_type") == command_type
@@ -467,7 +515,7 @@ class GatewayCoordinator:
                 "state": "pending", "created_at": _iso(now), "updated_at": _iso(now),
                 "expires_at": _iso(now + timedelta(seconds=DEVICE_COMMAND_TIMEOUT)),
                 "delivery_attempt": 0,
-                "target": copy.deepcopy(DEVICE_COMMAND_TARGET),
+                "target": copy.deepcopy(target),
                 "parameters": copy.deepcopy(parameters),
             }
             try:
@@ -476,6 +524,32 @@ class GatewayCoordinator:
                 library["gateway_runtime_protocol"] = before
                 raise HomeAssistantError("Unable to persist device control command") from error
             count = self._pending_count(protocol, serial)
+        return command_id, count
+
+    async def send_device_control(self, serial, command_type, parameters):
+        """创建短有效期的设备控制命令。
+
+        设备控制不排队补执行：命令只在短时间内有效，同类命令只保留最新一条，
+        执行后的实际状态由APK后续状态上报回传。
+        """
+        command_id, count = await self._create_control_command(
+            serial, command_type, parameters, CAPABILITY_DEVICE_CONTROL,
+            DEVICE_COMMAND_TARGET,
+            "HA100 is offline or does not support screen control",
+        )
+        self.hass.bus.async_fire(COMMAND_EVENT, {
+            "protocol_version": 1, "schema_version": 1,
+            "gateway_serial": serial, "pending_command_count": count,
+        })
+        return command_id
+
+    async def send_media_control(self, serial, command_type, parameters):
+        """创建短有效期的媒体播放命令，规则与设备控制一致。"""
+        command_id, count = await self._create_control_command(
+            serial, command_type, parameters, CAPABILITY_MEDIA_PLAYER,
+            MEDIA_COMMAND_TARGET,
+            "HA100 is offline or does not support media playback",
+        )
         self.hass.bus.async_fire(COMMAND_EVENT, {
             "protocol_version": 1, "schema_version": 1,
             "gateway_serial": serial, "pending_command_count": count,
@@ -494,6 +568,32 @@ class GatewayCoordinator:
             if live is None:
                 raise ValueError("gateway_not_ready")
             live.setdefault("status", {}).update(message["payload"])
+        self._notify(serial)
+        return {"accepted": True}
+
+    async def update_media_state(self, message):
+        """接收APK媒体播放状态上报，只驻内存，不落盘。"""
+        serial = message["gateway_serial"]
+        async with self.lock:
+            self._check_session(message)
+            live = self.runtime.get(serial)
+            if live is None:
+                raise ValueError("gateway_not_ready")
+            live.setdefault("media", {}).update(message["payload"])
+        self._notify(serial)
+        return {"accepted": True}
+
+    async def update_motion_event(self, message):
+        """接收APK重力感应事件，只驻内存；事件不补发、不重放。"""
+        serial = message["gateway_serial"]
+        async with self.lock:
+            self._check_session(message)
+            live = self.runtime.get(serial)
+            if live is None:
+                raise ValueError("gateway_not_ready")
+            motion = live.setdefault("motion", {})
+            motion["counter"] = motion.get("counter", 0) + 1
+            motion["event_type"] = message["payload"]["event_type"]
         self._notify(serial)
         return {"accepted": True}
 
@@ -888,3 +988,58 @@ async def websocket_gateway_ack(hass, connection, msg):
 @websocket_api.async_response
 async def websocket_gateway_status(hass, connection, msg):
     await _respond(connection, msg, validate_status, coordinator(hass).update_status, "gateway status")
+
+
+@websocket_api.websocket_command(_schema(f"{DOMAIN}/gateway/media_state"))
+@websocket_api.async_response
+async def websocket_gateway_media_state(hass, connection, msg):
+    await _respond(
+        connection, msg, validate_media_state,
+        coordinator(hass).update_media_state, "gateway media state",
+    )
+
+
+@websocket_api.websocket_command(_schema(f"{DOMAIN}/gateway/motion_event"))
+@websocket_api.async_response
+async def websocket_gateway_motion_event(hass, connection, msg):
+    await _respond(
+        connection, msg, validate_motion_event,
+        coordinator(hass).update_motion_event, "gateway motion event",
+    )
+
+
+# 语音会话路由只在内存中处理，不进入持久化命令队列，也不做sequence去重。
+@websocket_api.websocket_command(_schema(f"{DOMAIN}/assist/session_start"))
+@websocket_api.async_response
+async def websocket_assist_session_start(hass, connection, msg):
+    await _respond(
+        connection, msg, validate_assist_session_start,
+        assist_manager(hass).start_session, "assist session start",
+    )
+
+
+@websocket_api.websocket_command(_schema(f"{DOMAIN}/assist/audio_chunk"))
+@websocket_api.async_response
+async def websocket_assist_audio_chunk(hass, connection, msg):
+    await _respond(
+        connection, msg, validate_assist_audio_chunk,
+        assist_manager(hass).audio_chunk, "assist audio chunk",
+    )
+
+
+@websocket_api.websocket_command(_schema(f"{DOMAIN}/assist/session_end"))
+@websocket_api.async_response
+async def websocket_assist_session_end(hass, connection, msg):
+    await _respond(
+        connection, msg, validate_assist_session_end,
+        assist_manager(hass).session_end, "assist session end",
+    )
+
+
+@websocket_api.websocket_command(_schema(f"{DOMAIN}/assist/tts_finished"))
+@websocket_api.async_response
+async def websocket_assist_tts_finished(hass, connection, msg):
+    await _respond(
+        connection, msg, validate_assist_tts_finished,
+        assist_manager(hass).tts_finished, "assist tts finished",
+    )

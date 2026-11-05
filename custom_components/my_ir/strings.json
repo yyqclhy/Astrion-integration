@@ -75,9 +75,33 @@
         "name": "Screen"
       }
     },
+    "event": {
+      "motion": {
+        "name": "Motion Event",
+        "state_attributes": {
+          "event_type": {
+            "state": {
+              "picked_up": "Picked up",
+              "placed_down": "Placed down",
+              "motion_detected": "Motion detected"
+            }
+          }
+        }
+      }
+    },
     "number": {
       "screen_brightness": {
         "name": "Screen Brightness"
+      }
+    },
+    "media_player": {
+      "media_player": {
+        "name": "Speaker"
+      }
+    },
+    "assist_satellite": {
+      "assist_satellite": {
+        "name": "Voice Assistant"
       }
     }
   }

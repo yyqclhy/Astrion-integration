@@ -18,11 +18,18 @@ from .const import (
 )
 
 from .gateway import (
+    async_request_apk_refresh,
     coordinator,
+    websocket_assist_audio_chunk,
+    websocket_assist_session_end,
+    websocket_assist_session_start,
+    websocket_assist_tts_finished,
     websocket_bluetooth_inventory,
     websocket_gateway_ack,
     websocket_gateway_get_pending,
     websocket_gateway_heartbeat,
+    websocket_gateway_media_state,
+    websocket_gateway_motion_event,
     websocket_gateway_status,
 )
 
@@ -31,7 +38,7 @@ _LOGGER = logging.getLogger(__name__)
 STORAGE_VERSION = 1
 STORAGE_KEY = f"{DOMAIN}.library"
 IR_CODE_STORAGE_KEY = f"{DOMAIN}_ir_codes"
-PLATFORMS = ["remote", "select", "button", "sensor", "binary_sensor", "number"]
+PLATFORMS = ["remote", "select", "button", "sensor", "binary_sensor", "number", "media_player", "assist_satellite", "event"]
 MAX_BROADLINK_DEVICES = 100
 MAX_BROADLINK_KEYS_PER_DEVICE = 200
 MAX_BROADLINK_CODE_LENGTH = 16_384
@@ -111,6 +118,12 @@ async def async_setup(hass: HomeAssistant, config: dict) -> bool:
     websocket_api.async_register_command(hass, websocket_gateway_get_pending)
     websocket_api.async_register_command(hass, websocket_gateway_ack)
     websocket_api.async_register_command(hass, websocket_gateway_status)
+    websocket_api.async_register_command(hass, websocket_gateway_media_state)
+    websocket_api.async_register_command(hass, websocket_gateway_motion_event)
+    websocket_api.async_register_command(hass, websocket_assist_session_start)
+    websocket_api.async_register_command(hass, websocket_assist_audio_chunk)
+    websocket_api.async_register_command(hass, websocket_assist_session_end)
+    websocket_api.async_register_command(hass, websocket_assist_tts_finished)
     websocket_api.async_register_command(hass, websocket_bluetooth_inventory)
     _LOGGER.info("[Startup] WebSocket handlers registered successfully!")
 
@@ -230,6 +243,12 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     websocket_api.async_register_command(hass, websocket_gateway_get_pending)
     websocket_api.async_register_command(hass, websocket_gateway_ack)
     websocket_api.async_register_command(hass, websocket_gateway_status)
+    websocket_api.async_register_command(hass, websocket_gateway_media_state)
+    websocket_api.async_register_command(hass, websocket_gateway_motion_event)
+    websocket_api.async_register_command(hass, websocket_assist_session_start)
+    websocket_api.async_register_command(hass, websocket_assist_audio_chunk)
+    websocket_api.async_register_command(hass, websocket_assist_session_end)
+    websocket_api.async_register_command(hass, websocket_assist_tts_finished)
     websocket_api.async_register_command(hass, websocket_bluetooth_inventory)
 
     # 加载遥控器实体平台 + 网关场景选择器
@@ -249,6 +268,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             vol.Required("button"): cv.string,
         })
     )
+    # 平台加载完成后通知在线 APK 重新拉取实体，新增条目无需等待下一次手动刷新。
+    async_request_apk_refresh(hass, serial, "setup_entry")
     return True
 
 # ====================== 2. 卸载与设备删除 ======================

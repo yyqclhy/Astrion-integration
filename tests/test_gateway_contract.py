@@ -1,4 +1,5 @@
 """网关协议 v1 的纯数据校验与设备清单协调测试。"""
+import base64
 import copy
 import unittest
 import uuid
@@ -116,6 +117,104 @@ class GatewayContractTests(unittest.TestCase):
         screen["payload"]["result"] = {"screen_on": 0}
         with self.assertRaises(ValueError):
             DATA.validate_ack(screen)
+
+    def test_media_state_requires_known_fields_and_ranges(self):
+        message = envelope("astrion/gateway/media_state", self.boot, 0, {
+            "state": "playing", "volume_level": 50, "muted": False,
+        })
+        self.assertEqual(DATA.validate_media_state(message)["payload"]["state"], "playing")
+        paused = copy.deepcopy(message)
+        paused["payload"] = {"state": "paused"}
+        self.assertEqual(DATA.validate_media_state(paused)["payload"]["state"], "paused")
+        for payload in (
+            {}, {"volume_level": -1}, {"volume_level": 101},
+            {"volume_level": "50"}, {"muted": 0}, {"unknown": 1},
+        ):
+            invalid = copy.deepcopy(message)
+            invalid["payload"] = payload
+            with self.subTest(payload=payload), self.assertRaisesRegex(ValueError, "invalid_payload"):
+                DATA.validate_media_state(invalid)
+        legacy = copy.deepcopy(message)
+        legacy["schema_version"] = 2
+        with self.assertRaisesRegex(ValueError, "unsupported_schema"):
+            DATA.validate_media_state(legacy)
+
+    def test_motion_event_accepts_only_known_types(self):
+        for event_type in ("picked_up", "placed_down", "motion_detected"):
+            message = envelope("astrion/gateway/motion_event", self.boot, 0, {
+                "event_type": event_type,
+            })
+            self.assertEqual(
+                DATA.validate_motion_event(message)["payload"]["event_type"], event_type)
+        for payload in (
+            {}, {"event_type": "unknown"}, {"event_type": "picked_up", "extra": True},
+        ):
+            with self.subTest(payload=payload), self.assertRaisesRegex(ValueError, "invalid_payload"):
+                DATA.validate_motion_event(
+                    envelope("astrion/gateway/motion_event", self.boot, 0, payload))
+        legacy = envelope("astrion/gateway/motion_event", self.boot, 0, {
+            "event_type": "picked_up",
+        })
+        legacy["schema_version"] = 2
+        with self.assertRaisesRegex(ValueError, "unsupported_schema"):
+            DATA.validate_motion_event(legacy)
+
+    def test_media_ack_requires_v2_and_actual_state(self):
+        base = {
+            "id": 1, "type": "astrion/gateway/ack_command", "protocol_version": 1,
+            "schema_version": 2, "gateway_serial": "gateway-a", "boot_id": self.boot,
+            "sequence": 0,
+        }
+        results = {
+            "device.play_media": {"state": "playing"},
+            "device.stop_media": {"state": "idle"},
+            "device.pause_media": {"state": "paused"},
+            "device.resume_media": {"state": "playing"},
+            "device.set_volume": {"volume": 30},
+            "device.set_mute": {"muted": True},
+        }
+        for command_type, result in results.items():
+            message = copy.deepcopy(base)
+            message["payload"] = {
+                "command_id": str(uuid.uuid4()), "command_type": command_type,
+                "command_version": 1, "status": "succeeded", "result": result,
+            }
+            DATA.validate_ack(message)
+            legacy = copy.deepcopy(message)
+            legacy["schema_version"] = 1
+            with self.subTest(command_type=command_type), self.assertRaises(ValueError):
+                DATA.validate_ack(legacy)
+        invalid = copy.deepcopy(base)
+        invalid["payload"] = {
+            "command_id": str(uuid.uuid4()), "command_type": "device.set_mute",
+            "command_version": 1, "status": "succeeded", "result": {"muted": "true"},
+        }
+        with self.assertRaises(ValueError):
+            DATA.validate_ack(invalid)
+
+    def test_assist_routes_validate_session_and_audio(self):
+        session_id = str(uuid.uuid4())
+        for route, validator, payload in (
+            ("astrion/assist/session_start", DATA.validate_assist_session_start,
+             {"session_id": session_id}),
+            ("astrion/assist/session_end", DATA.validate_assist_session_end,
+             {"session_id": session_id}),
+            ("astrion/assist/tts_finished", DATA.validate_assist_tts_finished,
+             {"session_id": session_id}),
+            ("astrion/assist/audio_chunk", DATA.validate_assist_audio_chunk,
+             {"session_id": session_id, "audio": base64.b64encode(b"\x00\x01" * 1600).decode()}),
+        ):
+            validator(envelope(route, self.boot, 0, payload))
+            invalid = envelope(route, self.boot, 0, {**payload, "session_id": "announce-1"})
+            with self.subTest(route=route), self.assertRaisesRegex(ValueError, "invalid_payload"):
+                validator(invalid)
+        for audio in ("", "not-base64", base64.b64encode(b"\x00" * 3).decode(),
+                      base64.b64encode(b"\x00" * 3202).decode()):
+            invalid = envelope("astrion/assist/audio_chunk", self.boot, 0, {
+                "session_id": session_id, "audio": audio,
+            })
+            with self.subTest(audio=audio), self.assertRaisesRegex(ValueError, "invalid_payload"):
+                DATA.validate_assist_audio_chunk(invalid)
 
     def test_learning_ack_requires_v2_and_consistent_uart_pulses(self):
         valid = {
