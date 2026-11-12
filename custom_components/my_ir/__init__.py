@@ -18,7 +18,7 @@ from .const import (
 )
 
 from .gateway import (
-    async_request_apk_refresh,
+    async_request_heartbeat,
     coordinator,
     websocket_assist_audio_chunk,
     websocket_assist_session_end,
@@ -268,8 +268,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             vol.Required("button"): cv.string,
         })
     )
-    # 平台加载完成后通知在线 APK 重新拉取实体，新增条目无需等待下一次手动刷新。
-    async_request_apk_refresh(hass, serial, "setup_entry")
+    # 平台加载完成后请求 APK 立即补发心跳，让能力实体无需等待下一次周期心跳。
+    async_request_heartbeat(hass, serial)
     return True
 
 # ====================== 2. 卸载与设备删除 ======================

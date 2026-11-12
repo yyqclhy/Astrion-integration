@@ -196,16 +196,15 @@ def _protocol_store(library):
     return data
 
 
-def async_request_apk_refresh(hass, serial, source):
-    """请求 APK 重新拉取实体，用于集成新增实体后立即刷新条目。"""
+def async_request_heartbeat(hass, serial):
+    """请求 APK 立即补发一次心跳，用于集成加载后尽快声明能力并创建实体。"""
     if not serial:
         return
     hass.bus.async_fire(
-        f"{DOMAIN}/refresh_request",
+        f"{DOMAIN}/gateway/heartbeat_request",
         {
-            "serial_number": serial,
+            "gateway_serial": serial,
             "timestamp": _iso(),
-            "source": source,
         },
     )
 
@@ -338,13 +337,9 @@ class GatewayCoordinator:
         return True
 
     def _add_capability_entities_if_supported(self, serial):
-        """心跳更新能力后，补建此前因能力缺失而未创建的实体，并让 APK 立即刷新条目。"""
-        added = False
+        """心跳更新能力后，补建此前因能力缺失而未创建的实体。"""
         for identity in [item for item in self._capability_entity_adders if item[0] == serial]:
-            if self._add_capability_entity_if_supported(identity):
-                added = True
-        if added:
-            async_request_apk_refresh(self.hass, serial, "capability_added")
+            self._add_capability_entity_if_supported(identity)
 
     def status(self, serial):
         """返回网关最近一次上报的设备状态；离线时为空字典。"""
